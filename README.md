@@ -1,75 +1,64 @@
-# 🎮 Mini RPG Games
+# 🚗 GTA V Mini — Tuấn Anh's Open World RPG
 
-> A collection of bite-sized RPG games — built as single-file HTML, runs anywhere.
+> Single-file HTML game. Open world, drive, missions, NPC AI, wanted system, sinh tồn cơ bản.
 
 **By:** Tuấn Anh's AI · **Live:** https://tuananh4865.github.io/mini-rpg-games/
 
 ---
 
-## 🎯 Games
+## 🎯 About
 
-| # | Game | Style | Status |
-|---|------|-------|--------|
-| 1 | [Forest Wanderer](games/forest-wanderer.html) | Top-down pixel RPG, slash + explore | ✅ v1.0 |
-| 2 | [City Drift](games/city-drift.html) | GTA-lite open-world, drive + missions | ✅ v1.0 |
+Dự án open world role play lấy cảm hứng từ **GTA V** — chơi trực tiếp trong browser, không cần cài đặt, chạy trên mọi thiết bị (desktop + mobile).
 
----
+**Triết lý thiết kế:**
+- **Single-file HTML** — mỗi game là 1 file độc lập, không build step
+- **Canvas 2D** — pixel art thuần code, không asset ngoài
+- **Procedural** — map, NPC, mission sinh ra từ thuật toán
+- **Tương tác trau chuốt** — điều khiển mượt, juice effects, feedback rõ ràng
 
-## 🕹️ Quick Play
+## 🕹️ Game hiện tại
 
-Click any game above to play. **No install, no login, works on phone + desktop.**
+| Game | Trạng thái | Mô tả |
+|------|-----------|-------|
+| [City Drift (Prototype v1.0)](games/city-drift.html) | ✅ Live | Prototype đầu tiên — lái xe, mission, wanted, combat |
 
-### Controls cheat sheet
-**Forest Wanderer** — WASD move · Shift dash · Space/E attack/interact
-**City Drift** — WASD drive · Shift boost · Space brake/punch · E in/out car · F shoot · M mission
+## 📋 Đang phát triển
 
----
+Xem [docs/ROADMAP.md](docs/ROADMAP.md) cho plan chi tiết. Tóm tắt:
 
-## 🛠️ Tech Stack
-
-- **Pure HTML/CSS/JS** — single file, no build step
-- **Canvas 2D** rendering (pixel art, no asset files)
-- **Procedural generation** — no external data
-- **GitHub Pages** hosting (free CDN)
-- **GitHub Actions** auto-deploy on push
-
----
+- **v1.1** — Polish combat + audio + save state
+- **v2.0** — Inventory, NPC memory, day/night cycle
+- **v3.0** — Hệ thống sinh tồn (ăn, uống, sức khỏe, năng lượng)
+- **v4.0** — Story missions + heists
+- **v5.0** — Multiplayer P2P
 
 ## 📦 Project Structure
 
 ```
 mini-rpg-games/
-├── games/              # All game HTML files (single-file games)
-│   ├── forest-wanderer.html
-│   ├── city-drift.html
-│   └── index.html      # Landing page
-├── docs/               # Documentation
-│   ├── ROADMAP.md      # Future plans
-│   ├── CHANGELOG.md    # Version history
-│   └── CONTRIBUTING.md
-├── assets/             # Shared assets (sprites, sounds) — future
-├── .github/
-│   └── workflows/
-│       └── deploy.yml  # GitHub Pages auto-deploy
-└── README.md           # This file
+├── games/
+│   ├── index.html              # Landing page
+│   └── city-drift.html         # GTA V Mini prototype v1.0
+├── docs/
+│   ├── ROADMAP.md              # 5-version plan chi tiết
+│   ├── CHANGELOG.md            # SemVer history
+│   └── CONTRIBUTING.md         # Coding conventions
+├── research/                   # Research notes (sẽ tạo)
+└── README.md                   # This file
 ```
 
----
+## 🛠️ Tech Stack
 
-## 🗺️ Roadmap
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for full plan. TLDR:
-
-- **v1.x** — Polish core games (better combat, more missions, save state)
-- **v2.0** — Add inventory system + NPCs with memory
-- **v3.0** — Multiplayer (WebRTC peer-to-peer for 2-4 players)
-- **v4.0** — Mobile-first PWA + Telegram Mini App
-
----
+- HTML5 + CSS3 + Vanilla JavaScript (ES2020+)
+- Canvas 2D rendering
+- Web Audio API (planned)
+- localStorage (planned for save state)
+- GitHub Pages (hosting)
+- GitHub Actions (planned auto-deploy)
 
 ## 📜 License
 
-MIT — do whatever you want, just don't sell it as-is.
+MIT — free to use, modify, distribute.
 
 ---
 
