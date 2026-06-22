@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>City Drift — GTA Mini</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    font-family: 'Courier New', monospace;
+    color: #e8e8d8;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  #wrap {
+    position: relative; width: 100vw; height: 100vh;
+    background: #0a0a14;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #game { display: block; image-rendering: pixelated; box-shadow: 0 0 40px rgba(255,180,80,0.15); }
+  .panel {
+    position: absolute;
+    background: rgba(10,10,20,0.85);
+    border: 1px solid #3a3a5a;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px; line-height: 1.5;
+    pointer-events: none;
+  }
+  #hud { top: 12px; left: 12px; min-width: 200px; }
+  #hud .row { display: flex; justify-content: space-between; gap: 12px; }
+  #hud .label { color: #8a8aa8; }
+  #hud .val { color: #e8e8d8; font-weight: bold; }
+  #hud .val.low { color: #ff6b6b; }
+  #hud .val.high { color: #6bcf7a; }
+  .bar { height: 6px; background: #1a1a2a; border-radius: 3px; overflow: hidden; margin-top: 2px; }
+  .bar-fill { height: 100%; transition: width 0.2s; }
+
+  #wanted {
+    top: 12px; right: 12px;
+    display: flex; gap: 4px;
+  }
+  #wanted .star {
+    width: 22px; height: 22px;
+    color: #2a2a3a;
+    font-size: 20px; line-height: 22px;
+    text-align: center;
+  }
+  #wanted .star.on { color: #ff4444; text-shadow: 0 0 8px rgba(255,68,68,0.6); }
+
+  #minimap {
+    bottom: 12px; left: 12px;
+    padding: 4px;
+    background: rgba(0,0,0,0.7);
+  }
+  #minimap canvas { display: block; image-rendering: pixelated; }
+
+  #mission {
+    bottom: 12px; right: 12px;
+    max-width: 280px;
+    border-color: #ffd166;
+  }
+  #mission .title { color: #ffd166; font-weight: bold; font-size: 13px; margin-bottom: 4px; }
+  #mission .desc { color: #e8e8d8; }
+  #mission .obj { color: #8a8aa8; font-size: 11px; margin-top: 4px; }
+  #mission .obj .done { color: #6bcf7a; }
+  #mission .obj .pending { color: #ffd166; }
+
+  #controls {
+    top: 12px; left: 50%; transform: translateX(-50%);
+    text-align: center;
+    border-color: #2a2a3a;
+  }
+  #controls kbd {
+    display: inline-block; padding: 1px 5px;
+    background: #2a2a3a; border: 1px solid #4a4a6a;
+    border-radius: 3px; color: #e8e8d8; font-size: 10px; margin: 0 1px;
+  }
+
+  #msg {
+    position: absolute;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    padding: 16px 28px;
+    background: rgba(10,10,20,0.95);
+    border: 2px solid #ffd166;
+    border-radius: 8px;
+    font-size: 16px; font-weight: bold;
+    color: #ffd166;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0; transition: opacity 0.3s;
+    box-shadow: 0 0 30px rgba(255,209,102,0.4);
+  }
+  #msg.show { opacity: 1; }
+  #msg.fail { color: #ff6b6b; border-color: #ff6b6b; box-shadow: 0 0 30px rgba(255,107,107,0.4); }
+  #msg.success { color: #6bcf7a; border-color: #6bcf7a; box-shadow: 0 0 30px rgba(107,207,122,0.4); }
+
+  #intro {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.95);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 10;
+    transition: opacity 0.5s;
+  }
+  #intro.hidden { opacity: 0; pointer-events: none; }
+  #intro h1 {
+    font-size: 42px; color: #ff6b35;
+    text-shadow: 0 0 20px rgba(255,107,53,0.6);
+    margin-bottom: 4px; letter-spacing: 4px;
+  }
+  #intro h2 { font-size: 18px; color: #ffd166; margin-bottom: 32px; font-weight: normal; }
+  #intro .start { padding: 14px 32px; border: 2px solid #ff6b35; color: #ff6b35; animation: pulse 1.5s infinite; font-size: 14px; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  #intro .keys { color: #8a8aa8; font-size: 11px; margin-top: 20px; line-height: 1.8; text-align: center; }
+  #intro .keys kbd { padding: 2px 6px; background: #2a2a3a; border: 1px solid #4a4a6a; border-radius: 3px; color: #e8e8d8; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+
+  <div id="hud" class="panel">
+    <div class="row"><span class="label">❤️ HP</span><span class="val" id="hp">100</span></div>
+    <div class="bar"><div class="bar-fill" id="hpBar" style="width:100%; background:#6bcf7a;"></div></div>
+    <div class="row" style="margin-top:6px;"><span class="label">💰 $</span><span class="val high" id="money">0</span></div>
+    <div class="row"><span class="label">🏆 Điểm</span><span class="val" id="score">0</span></div>
+    <div class="row" style="margin-top:6px;"><span class="label">🚗 Phương tiện</span><span class="val" id="veh">—</span></div>
+    <div class="row"><span class="label">⚡ Tốc độ</span><span class="val" id="spd">0 km/h</span></div>
+  </div>
+
+  <div id="wanted"><div class="star">★</div><div class="star">★</div><div class="star">★</div><div class="star">★</div><div class="star">★</div></div>
+
+  <div id="controls" class="panel">
+    <kbd>WASD</kbd> lái xe &nbsp; <kbd>SPACE</kbd> phanh tay &nbsp; <kbd>E</kbd> lên/xuống xe &nbsp; <kbd>F</kbd> bắn
+  </div>
+
+  <div id="minimap" class="panel"><canvas id="mini" width="160" height="160"></canvas></div>
+
+  <div id="mission" class="panel">
+    <div class="title">📋 Nhiệm vụ</div>
+    <div class="desc" id="missionDesc">Nhấn M để bắt đầu nhiệm vụ</div>
+    <div class="obj" id="missionObj"></div>
+  </div>
+
+  <div id="msg"></div>
+
+  <div id="intro">
+    <h1>CITY DRIFT</h1>
+    <h2>— GTA Mini —</h2>
+    <div class="start">NHẤN [SPACE] ĐỂ VÀO GAME</div>
+    <div class="keys">
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> di chuyển / lái xe<br>
+      <kbd>SPACE</kbd> phanh tay / đấm<br>
+      <kbd>E</kbd> lên xuống xe / tương tác<br>
+      <kbd>F</kbd> bắn / tấn công<br>
+      <kbd>M</kbd> bản đồ nhiệm vụ<br>
+      <kbd>SHIFT</kbd> boost
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const miniCanvas = document.getElementById('mini');
+const miniCtx = miniCanvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// ============ INPUT ============
+const keys = {};
+const justPressed = {};
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (!keys[k]) justPressed[k] = true;
+  keys[k] = true;
+  if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+function consume(k) { if (justPressed[k]) { justPressed[k] = false; return true; } return false; }
+
+// ============ WORLD ============
+// Tile types: 0=grass, 1=road, 2=building, 3=sidewalk, 4=water
+const TILE = 64;
+const WORLD_W = 50, WORLD_H = 50;
+const world = [];
+
+// City block generation
+function generateCity() {
+  // Init all grass
+  for (let y = 0; y < WORLD_H; y++) {
+    world[y] = [];
+    for (let x = 0; x < WORLD_W; x++) world[y][x] = 0;
+  }
+
+  // Roads: grid every 8 tiles
+  for (let y = 0; y < WORLD_H; y++) {
+    for (let x = 0; x < WORLD_W; x++) {
+      // Horizontal roads at y=5, 12, 19, 26, 33, 40
+      if ([5, 12, 19, 26, 33, 40].includes(y)) world[y][x] = 1;
+      // Vertical roads at x=8, 16, 24, 32, 40
+      if ([8, 16, 24, 32, 40].includes(x)) world[y][x] = 1;
+    }
+  }
+
+  // Buildings in blocks
+  for (let by = 0; by < 6; by++) {
+    for (let bx = 0; bx < 5; bx++) {
+      const baseX = bx * 8 + 1;
+      const baseY = by * 7 + 1;
+      // Block size ~ 7x5
+      for (let dy = 0; dy < 5; dy++) {
+        for (let dx = 0; dx < 7; dx++) {
+          const tx = baseX + dx, ty = baseY + dy;
+          if (tx >= WORLD_W || ty >= WORLD_H) continue;
+          if (world[ty][tx] === 1) continue;
+          // Leave space for sidewalk near road
+          if (dy === 4 || dx === 6) { world[ty][tx] = 3; continue; }
+          // Skip some cells for variety
+          if (Math.random() < 0.15 && (dx > 0 && dy > 0)) { world[ty][tx] = 0; continue; }
+          world[ty][tx] = 2; // building
+        }
+      }
+    }
+  }
+
+  // Park (grass area)
+  for (let y = 36; y < 40; y++)
+    for (let x = 1; x < 7; x++)
+      world[y][x] = 0;
+
+  // Water feature (river)
+  for (let x = 0; x < WORLD_W; x++) world[0][x] = 4;
+  for (let x = 0; x < WORLD_W; x++) world[49][x] = 4;
+}
+generateCity();
+
+// ============ PLAYER & VEHICLE ============
+const player = {
+  x: 400, y: 400, angle: 0, speed: 0,
+  maxSpeed: 180, accel: 220, brake: 300, drag: 1.2,
+  hp: 100, maxHp: 100, money: 0, score: 0,
+  inVehicle: false, vehicleRef: null,
+  invincible: 0,
+  hitFlash: 0,
+  walkSpeed: 110,
+  wanted: 0, // 0-5
+  wantedDecay: 0,
+  weapon: 'fist', // fist, pistol
+  ammo: 30,
+  shootCooldown: 0,
+  punchCooldown: 0,
+  animFrame: 0, animTimer: 0,
+  mission: null, // current mission
+  missionCooldown: 0,
+  alive: true,
+};
+
+const vehicles = [
+  { name: 'Sedan', x: 600, y: 600, angle: 0, speed: 0, maxSpeed: 280, color: '#4a6aaa', w: 32, h: 50, hp: 100 },
+  { name: 'Sports', x: 1200, y: 900, angle: 0, speed: 0, maxSpeed: 380, color: '#cc3344', w: 30, h: 48, hp: 100 },
+  { name: 'Truck', x: 800, y: 1800, angle: 0, speed: 0, maxSpeed: 220, color: '#5a8a3a', w: 36, h: 60, hp: 150 },
+  { name: 'Motor', x: 2000, y: 400, angle: 0, speed: 0, maxSpeed: 320, color: '#222', w: 16, h: 32, hp: 60 },
+];
+
+// Add some parked cars (decor + obstacles)
+const parkedCars = [];
+for (let i = 0; i < 40; i++) {
+  // Find road tile
+  let px, py;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    px = Math.floor(Math.random() * WORLD_W);
+    py = Math.floor(Math.random() * WORLD_H);
+    if (world[py][px] === 1) break;
+    px = -1;
+  }
+  if (px < 0) continue;
+  const colors = ['#888', '#666', '#aaa', '#445', '#557', '#776', '#553'];
+  parkedCars.push({
+    x: px * TILE + TILE/2 + (Math.random()-0.5) * 30,
+    y: py * TILE + TILE/2 + (Math.random()-0.5) * 30,
+    angle: [0, Math.PI/2][Math.floor(Math.random()*2)],
+    color: colors[Math.floor(Math.random() * colors.length)],
+    w: 30, h: 48,
+  });
+}
+
+// NPC pedestrians
+const npcs = [];
+const npcNames = ['Minh', 'Lan', 'Hùng', 'Mai', 'Tuấn', 'Linh', 'Đức', 'Hoa', 'Sơn', 'Vy'];
+for (let i = 0; i < 25; i++) {
+  let px, py;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    px = Math.floor(Math.random() * WORLD_W);
+    py = Math.floor(Math.random() * WORLD_H);
+    if (world[py][px] === 3 || world[py][px] === 0) break;
+    px = -1;
+  }
+  if (px < 0) continue;
+  npcs.push({
+    x: px * TILE + TILE/2, y: py * TILE + TILE/2,
+    angle: Math.random() * Math.PI * 2,
+    speed: 25 + Math.random() * 15,
+    name: npcNames[Math.floor(Math.random() * npcNames.length)],
+    color: ['#ff6b9d', '#6bcf7a', '#a78bfa', '#ffd166', '#6bb8ff'][Math.floor(Math.random()*5)],
+    wanderTimer: 0,
+    scared: 0,
+  });
+}
+
+// Police cars
+const policeCars = [];
+
+// Bullets
+const bullets = [];
+
+// Particles
+const particles = [];
+
+// Mission markers
+const missionMarkers = [
+  { x: 1000, y: 400, type: 'taxi' },
+  { x: 1600, y: 1200, type: 'delivery' },
+  { x: 2200, y: 2000, type: 'chase' },
+];
+
+// ============ CAMERA ============
+const camera = { x: 0, y: 0 };
+function updateCamera() {
+  camera.x = player.x - W/2;
+  camera.y = player.y - H/2;
+}
+
+// ============ HELPERS ============
+function tileAt(px, py) {
+  const tx = Math.floor(px / TILE);
+  const ty = Math.floor(py / TILE);
+  if (tx < 0 || tx >= WORLD_W || ty < 0 || ty >= WORLD_H) return 4;
+  return world[ty][tx];
+}
+
+function isSolid(px, py, r=10) {
+  const t = tileAt(px, py);
+  return t === 2 || t === 4;
+}
+
+function rectCollide(ax, ay, aw, ah, aang, bx, by, bw, bh, bang) {
+  // Simple AABB rotated by angle (close enough for cars)
+  const cornersA = getCorners(ax, ay, aw, ah, aang);
+  const cornersB = getCorners(bx, by, bw, bh, bang);
+  // SAT check (simple)
+  for (const poly of [cornersA, cornersB]) {
+    for (let i = 0; i < poly.length; i++) {
+      const j = (i + 1) % poly.length;
+      const edgeX = poly[j][0] - poly[i][0];
+      const edgeY = poly[j][1] - poly[i][1];
+      const len = Math.sqrt(edgeX*edgeX + edgeY*edgeY);
+      const nx = -edgeY / len, ny = edgeX / len;
+      let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+      for (const [x, y] of cornersA) { const p = x*nx + y*ny; if (p < minA) minA = p; if (p > maxA) maxA = p; }
+      for (const [x, y] of cornersB) { const p = x*nx + y*ny; if (p < minB) minB = p; if (p > maxB) maxB = p; }
+      if (maxA < minB || maxB < minA) return false;
+    }
+  }
+  return true;
+}
+
+function getCorners(cx, cy, w, h, angle) {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const hw = w/2, hh = h/2;
+  const local = [[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]];
+  return local.map(([x,y]) => [cx + x*cos - y*sin, cy + x*sin + y*cos]);
+}
+
+function dist(a, b) {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+function addParticle(x, y, color, count=8) {
+  for (let i = 0; i < count; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const sp = 50 + Math.random() * 100;
+    particles.push({
+      x, y, vx: Math.cos(ang)*sp, vy: Math.sin(ang)*sp,
+      life: 0.5 + Math.random()*0.5, maxLife: 1, color, size: 2 + Math.random()*3,
+    });
+  }
+}
+
+// ============ MESSAGES ============
+let msgTimer = 0;
+function showMsg(text, type='normal', duration=2) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = 'show ' + type;
+  msgTimer = duration;
+}
+function hideMsg() {
+  document.getElementById('msg').className = '';
+}
+
+// ============ MISSIONS ============
+const missions = {
+  taxi: {
+    title: '🚕 Tài xế Taxi',
+    desc: 'Chở khách đến điểm đánh dấu',
+    start: () => {
+      player.mission = { type: 'taxi', passenger: 1, started: true };
+      missionMarkers[0].active = true;
+    },
+    update: (dt) => {
+      const m = player.mission;
+      if (m.pickedUp) {
+        m.timer -= dt;
+        if (dist(player, missionMarkers[0]) < 40) {
+          const reward = 200 + Math.floor((60 - m.timer) * 5);
+          player.money += reward;
+          player.score += 100;
+          showMsg(`🚕 Giao khách thành công! +$${reward}`, 'success', 3);
+          player.mission = null;
+          missionMarkers[0].active = false;
+        } else if (m.timer <= 0) {
+          showMsg('⏰ Hết giờ! Nhiệm vụ thất bại', 'fail', 2);
+          player.mission = null;
+          missionMarkers[0].active = false;
+        }
+      } else {
+        if (dist(player, missionMarkers[0]) < 40) {
+          m.pickedUp = true;
+          m.timer = 60;
+          showMsg('📍 Đã có khách! Giao đến điểm X trên minimap', 'normal', 2);
+        }
+      }
+    },
+  },
+  delivery: {
+    title: '📦 Giao hàng nhanh',
+    desc: 'Lấy hàng và giao trong 45s',
+    start: () => {
+      player.mission = { type: 'delivery', pickedUp: false, timer: 45 };
+      missionMarkers[1].active = true;
+    },
+    update: (dt) => {
+      const m = player.mission;
+      m.timer -= dt;
+      if (!m.pickedUp) {
+        if (dist(player, missionMarkers[1]) < 40) {
+          m.pickedUp = true;
+          showMsg('📦 Đã lấy hàng! Giao ngay!', 'normal', 2);
+        }
+      } else {
+        if (dist(player, missionMarkers[1]) < 40 && m.timer > 5) {
+          const reward = 150 + Math.floor(m.timer * 3);
+          player.money += reward;
+          player.score += 80;
+          showMsg(`📦 Giao hàng thành công! +$${reward}`, 'success', 3);
+          player.mission = null;
+          missionMarkers[1].active = false;
+        }
+      }
+      if (m.timer <= 0) {
+        showMsg('⏰ Trễ hẹn! -$50', 'fail', 2);
+        player.money = Math.max(0, player.money - 50);
+        player.mission = null;
+        missionMarkers[1].active = false;
+      }
+    },
+  },
+  chase: {
+    title: '🏎️ Đuổi bắt tốc độ',
+    desc: 'Đuổi kịp đối thủ trong 30s',
+    start: () => {
+      player.mission = { type: 'chase', timer: 30, target: { x: 2400, y: 2200, angle: 0, speed: 200 } };
+      missionMarkers[2].active = true;
+    },
+    update: (dt) => {
+      const m = player.mission;
+      m.timer -= dt;
+      // Target moves
+      m.target.x += Math.cos(m.target.angle) * m.target.speed * dt;
+      m.target.y += Math.sin(m.target.angle) * m.target.speed * dt;
+      m.target.angle += (Math.random() - 0.5) * 0.5;
+      // Wall bounce
+      if (isSolid(m.target.x, m.target.y)) {
+        m.target.angle += Math.PI;
+      }
+      const d = dist(player, m.target);
+      if (d < 80) {
+        const reward = 500;
+        player.money += reward;
+        player.score += 200;
+        showMsg(`🏆 Bắt được! +$${reward}`, 'success', 3);
+        player.mission = null;
+        missionMarkers[2].active = false;
+      } else if (m.timer <= 0) {
+        showMsg('💨 Đối thủ chạy thoát!', 'fail', 2);
+        player.mission = null;
+        missionMarkers[2].active = false;
+      }
+    },
+  },
+};
+
+function startMission(idx) {
+  if (player.mission) {
+    showMsg('❌ Đang có nhiệm vụ khác!', 'fail', 2);
+    return;
+  }
+  const types = ['taxi', 'delivery', 'chase'];
+  missions[types[idx]].start();
+  showMsg('📋 Bắt đầu: ' + missions[types[idx]].title, 'normal', 2);
+}
+
+// ============ UPDATE ============
+let started = false;
+let policeSpawnTimer = 0;
+let gunSmoke = [];
+
+function update(dt) {
+  if (!started) {
+    if (consume(' ') || consume('enter')) {
+      started = true;
+      document.getElementById('intro').classList.add('hidden');
+    }
+    return;
+  }
+
+  // Vehicle physics vs player
+  if (player.inVehicle) {
+    const v = player.vehicleRef;
+    let throttle = 0, steering = 0, brake = false;
+    if (keys['w'] || keys['arrowup']) throttle = 1;
+    if (keys['s'] || keys['arrowdown']) { throttle = -0.6; }
+    if (keys['a'] || keys['arrowleft']) steering = -1;
+    if (keys['d'] || keys['arrowright']) steering = 1;
+    if (keys[' ']) brake = true;
+    const boost = keys['shift'] ? 1.4 : 1;
+
+    // Speed
+    if (throttle > 0) v.speed += v.maxSpeed * 0.3 * throttle * dt;
+    else if (throttle < 0) v.speed += v.maxSpeed * 0.4 * throttle * dt;
+    else v.speed *= 0.98; // drag
+    v.speed = Math.max(-v.maxSpeed * 0.3, Math.min(v.maxSpeed * boost, v.speed));
+
+    // Brake
+    if (brake) v.speed *= 0.92;
+
+    // Steering (only when moving)
+    if (Math.abs(v.speed) > 5) {
+      const turnRate = (v.speed > 0 ? 1 : -1) * 2.2 * (Math.abs(v.speed) / v.maxSpeed);
+      v.angle += steering * turnRate * dt;
+    }
+
+    // Move with collision
+    const newX = v.x + Math.cos(v.angle) * v.speed * dt;
+    const newY = v.y + Math.sin(v.angle) * v.speed * dt;
+    let hit = false;
+    if (isSolid(newX, v.y, 20)) { v.speed *= -0.4; hit = true; }
+    else v.x = newX;
+    if (isSolid(v.x, newY, 20)) { v.speed *= -0.4; hit = true; }
+    else v.y = newY;
+
+    if (hit && Math.abs(v.speed) > 50) {
+      addParticle(v.x, v.y, '#ffaa44', 6);
+      v.hp -= 5;
+      if (v.hp <= 0) {
+        showMsg('💥 Xe hỏng! Ra ngoài đi bộ', 'fail', 2);
+        player.inVehicle = false;
+        player.vehicleRef = null;
+        player.x = v.x; player.y = v.y;
+        v.hp = 0;
+      } else {
+        player.wanted = Math.min(5, player.wanted + 1);
+      }
+    }
+
+    // Sync player to vehicle
+    player.x = v.x; player.y = v.y; player.angle = v.angle;
+
+    // Hit pedestrians/objects
+    if (Math.abs(v.speed) > 40) {
+      for (const n of npcs) {
+        if (n.dead) continue;
+        if (dist(v, n) < 25 && n.hitCooldown <= 0) {
+          n.dead = true;
+          n.hitCooldown = 0.5;
+          player.wanted = Math.min(5, player.wanted + 2);
+          player.money -= 100;
+          player.score -= 50;
+          addParticle(n.x, n.y, '#ff6b6b', 15);
+          showMsg('💀 Đâm phải người đi bộ! CẢNH SÁT ĐANG ĐUỔI!', 'fail', 3);
+        }
+      }
+      for (const c of parkedCars) {
+        if (c.dead) continue;
+        if (dist(v, c) < 28 && c.hitCooldown <= 0) {
+          c.dead = true; c.hitCooldown = 1;
+          addParticle(c.x, c.y, '#888', 8);
+          v.speed *= 0.5;
+        }
+      }
+    }
+
+    // Exit vehicle
+    if (consume('e')) {
+      player.inVehicle = false;
+      player.vehicleRef = null;
+      player.x = v.x + Math.cos(v.angle + Math.PI/2) * 35;
+      player.y = v.y + Math.sin(v.angle + Math.PI/2) * 35;
+      showMsg('🚶 Đã xuống xe', 'normal', 1.5);
+    }
+
+    // Shoot from vehicle
+    if (consume('f') && player.weapon === 'pistol' && player.shootCooldown <= 0) {
+      shootBullet(v.x + Math.cos(v.angle)*30, v.y + Math.sin(v.angle)*30, v.angle);
+      player.ammo--;
+      if (player.ammo <= 0) {
+        player.weapon = 'fist';
+        showMsg('🔫 Hết đạn!', 'fail', 1.5);
+      }
+    }
+  } else {
+    // On foot
+    let dx = 0, dy = 0;
+    if (keys['w'] || keys['arrowup']) dy -= 1;
+    if (keys['s'] || keys['arrowdown']) dy += 1;
+    if (keys['a'] || keys['arrowleft']) dx -= 1;
+    if (keys['d'] || keys['arrowright']) dx += 1;
+
+    if (dx || dy) {
+      const len = Math.sqrt(dx*dx + dy*dy);
+      dx /= len; dy /= len;
+      if (Math.abs(dx) > Math.abs(dy)) player.angle = dx > 0 ? 0 : Math.PI;
+      else player.angle = dy > 0 ? Math.PI/2 : -Math.PI/2;
+      const newX = player.x + dx * player.walkSpeed * dt;
+      const newY = player.y + dy * player.walkSpeed * dt;
+      if (!isSolid(newX, player.y, 8)) player.x = newX;
+      if (!isSolid(player.x, newY, 8)) player.y = newY;
+
+      player.animTimer += dt * 8;
+      if (player.animTimer >= 1) {
+        player.animTimer = 0;
+        player.animFrame = (player.animFrame + 1) % 4;
+      }
+    } else {
+      player.animFrame = 0;
+    }
+
+    // Enter vehicle
+    if (consume('e')) {
+      let nearest = null, nearDist = 50;
+      for (const v of vehicles) {
+        if (v.hp <= 0) continue;
+        const d = dist(player, v);
+        if (d < nearDist) { nearest = v; nearDist = d; }
+      }
+      if (nearest) {
+        player.inVehicle = true;
+        player.vehicleRef = nearest;
+        showMsg(`🚗 Lên xe: ${nearest.name}`, 'normal', 1.5);
+      }
+    }
+
+    // Punch
+    if (consume(' ') && player.punchCooldown <= 0) {
+      player.punchCooldown = 0.4;
+      // Hit NPCs in front
+      const atkX = player.x + Math.cos(player.angle) * 20;
+      const atkY = player.y + Math.sin(player.angle) * 20;
+      for (const n of npcs) {
+        if (n.dead) continue;
+        if (Math.hypot(n.x - atkX, n.y - atkY) < 20) {
+          n.dead = true;
+          n.dying = true;
+          addParticle(n.x, n.y, '#ff6b6b', 10);
+          player.wanted = Math.min(5, player.wanted + 1);
+          player.money += 20;
+          player.score += 10;
+        }
+      }
+      addParticle(atkX, atkY, '#ffd166', 4);
+    }
+
+    // Shoot on foot
+    if (consume('f') && player.weapon === 'pistol' && player.shootCooldown <= 0) {
+      shootBullet(player.x + Math.cos(player.angle)*15, player.y + Math.sin(player.angle)*15, player.angle);
+      player.ammo--;
+      if (player.ammo <= 0) {
+        player.weapon = 'fist';
+        showMsg('🔫 Hết đạn!', 'fail', 1.5);
+      }
+    }
+  }
+
+  // Shoot cooldown
+  if (player.shootCooldown > 0) player.shootCooldown -= dt;
+  if (player.punchCooldown > 0) player.punchCooldown -= dt;
+  if (player.invincible > 0) player.invincible -= dt;
+  if (player.hitFlash > 0) player.hitFlash -= dt;
+
+  // Wanted decay
+  if (player.wanted > 0) {
+    player.wantedDecay -= dt;
+    if (player.wantedDecay <= 0) {
+      player.wanted--;
+      player.wantedDecay = 8; // 8s per star
+    }
+  }
+
+  // Mission selection
+  if (consume('m')) {
+    if (!player.mission) {
+      const r = Math.floor(Math.random() * 3);
+      startMission(r);
+    } else {
+      showMsg('❌ Đang làm nhiệm vụ khác!', 'fail', 1.5);
+    }
+  }
+
+  // Update mission
+  if (player.mission) {
+    const m = player.mission;
+    if (m.type === 'taxi') missions.taxi.update(dt);
+    else if (m.type === 'delivery') missions.delivery.update(dt);
+    else if (m.type === 'chase') missions.chase.update(dt);
+  }
+
+  // Police spawn
+  if (player.wanted >= 2) {
+    policeSpawnTimer -= dt;
+    if (policeSpawnTimer <= 0 && policeCars.length < player.wanted) {
+      policeSpawnTimer = 5;
+      // Spawn police at edge
+      const edge = Math.floor(Math.random() * 4);
+      let px = player.x, py = player.y;
+      const off = 400;
+      if (edge === 0) px -= off;
+      else if (edge === 1) px += off;
+      else if (edge === 2) py -= off;
+      else py += off;
+      policeCars.push({
+        x: px, y: py, angle: 0, speed: 0,
+        maxSpeed: 250 + player.wanted * 15,
+        color: '#1133aa', w: 30, h: 48,
+        hp: 100, siren: 0,
+      });
+    }
+  }
+
+  // Police AI
+  for (let i = policeCars.length - 1; i >= 0; i--) {
+    const p = policeCars[i];
+    p.siren += dt * 6;
+    // Chase player
+    const ang = Math.atan2(player.y - p.y, player.x - p.x);
+    let targetAng = ang;
+    // Smooth turning
+    let diff = targetAng - p.angle;
+    while (diff > Math.PI) diff -= Math.PI*2;
+    while (diff < -Math.PI) diff += Math.PI*2;
+    p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 2.5 * dt);
+
+    // Accelerate
+    p.speed = Math.min(p.maxSpeed, p.speed + 200 * dt);
+    const nx = p.x + Math.cos(p.angle) * p.speed * dt;
+    const ny = p.y + Math.sin(p.angle) * p.speed * dt;
+    if (!isSolid(nx, p.y, 16)) p.x = nx; else p.angle += 1;
+    if (!isSolid(p.x, ny, 16)) p.y = ny; else p.angle += 1;
+
+    // Bump player
+    const d = dist(p, player);
+    if (d < 30 && player.invincible <= 0) {
+      player.hp -= 10;
+      player.invincible = 1;
+      player.hitFlash = 0.3;
+      addParticle(player.x, player.y, '#ff6b6b', 8);
+      if (player.hp <= 0) {
+        // Busted / wasted
+        showMsg('🚔 BỊ BẮT! Mất $200, về đồn', 'fail', 3);
+        player.money = Math.max(0, player.money - 200);
+        player.wanted = 0;
+        player.hp = player.maxHp;
+        player.x = 400; player.y = 400;
+        policeCars.length = 0;
+      }
+    }
+  }
+
+  // NPC update
+  for (const n of npcs) {
+    if (n.dead) continue;
+    n.wanderTimer -= dt;
+    if (n.scared > 0) {
+      n.scared -= dt;
+      // Run from player if wanted
+      if (player.wanted >= 1) {
+        const ang = Math.atan2(n.y - player.y, n.x - player.x);
+        n.angle = ang;
+        const nx = n.x + Math.cos(ang) * n.speed * 2 * dt;
+        const ny = n.y + Math.sin(ang) * n.speed * 2 * dt;
+        if (!isSolid(nx, ny, 6)) { n.x = nx; n.y = ny; }
+      }
+    } else if (n.wanderTimer <= 0) {
+      n.wanderTimer = 2 + Math.random() * 3;
+      n.angle = Math.random() * Math.PI * 2;
+    }
+    if (n.wanderTimer > 0.5 || n.scared > 0) {
+      const nx = n.x + Math.cos(n.angle) * n.speed * dt;
+      const ny = n.y + Math.sin(n.angle) * n.speed * dt;
+      if (!isSolid(nx, ny, 6)) { n.x = nx; n.y = ny; }
+      else n.angle = Math.random() * Math.PI * 2;
+    }
+  }
+
+  // Update bullets
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.x += Math.cos(b.angle) * b.speed * dt;
+    b.y += Math.sin(b.angle) * b.speed * dt;
+    b.life -= dt;
+    if (b.life <= 0 || isSolid(b.x, b.y, 2)) {
+      addParticle(b.x, b.y, '#ffd166', 4);
+      bullets.splice(i, 1); continue;
+    }
+    // Hit NPC
+    for (const n of npcs) {
+      if (n.dead) continue;
+      if (Math.hypot(n.x - b.x, n.y - b.y) < 12) {
+        n.dead = true;
+        addParticle(n.x, n.y, '#ff6b6b', 12);
+        player.wanted = Math.min(5, player.wanted + 1);
+        bullets.splice(i, 1); break;
+      }
+    }
+  }
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.95; p.vy *= 0.95;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Msg timer
+  if (msgTimer > 0) {
+    msgTimer -= dt;
+    if (msgTimer <= 0) hideMsg();
+  }
+
+  updateCamera();
+  updateHUD();
+}
+
+function shootBullet(x, y, angle) {
+  bullets.push({ x, y, angle, speed: 600, life: 1.5 });
+  player.shootCooldown = 0.2;
+  player.wanted = Math.min(5, player.wanted + 1);
+  addParticle(x, y, '#ffd166', 3);
+}
+
+// ============ RENDER ============
+function drawWorld() {
+  const startTX = Math.max(0, Math.floor(camera.x / TILE));
+  const startTY = Math.max(0, Math.floor(camera.y / TILE));
+  const endTX = Math.min(WORLD_W, Math.ceil((camera.x + W) / TILE) + 1);
+  const endTY = Math.min(WORLD_H, Math.ceil((camera.y + H) / TILE) + 1);
+
+  for (let y = startTY; y < endTY; y++) {
+    for (let x = startTX; x < endTX; x++) {
+      const t = world[y][x];
+      const px = x * TILE - camera.x;
+      const py = y * TILE - camera.y;
+      switch (t) {
+        case 0: // grass
+          ctx.fillStyle = (x+y) % 2 === 0 ? '#3d5a3d' : '#3a5535';
+          ctx.fillRect(px, py, TILE, TILE);
+          break;
+        case 1: // road
+          ctx.fillStyle = '#3a3a3a';
+          ctx.fillRect(px, py, TILE, TILE);
+          // Lane markings
+          ctx.fillStyle = '#ffd166';
+          if (y === 5 || y === 12 || y === 19 || y === 26 || y === 33 || y === 40) {
+            for (let i = 0; i < 4; i++) {
+              ctx.fillRect(px + i*16 + 4, py + TILE/2 - 1, 8, 2);
+            }
+          } else {
+            for (let i = 0; i < 4; i++) {
+              ctx.fillRect(px + TILE/2 - 1, py + i*16 + 4, 2, 8);
+            }
+          }
+          // Sidewalk strips
+          ctx.fillStyle = '#888';
+          ctx.fillRect(px, py, TILE, 4);
+          ctx.fillRect(px, py + TILE - 4, TILE, 4);
+          break;
+        case 2: // building
+          // Shadow
+          ctx.fillStyle = 'rgba(0,0,0,0.3)';
+          ctx.fillRect(px + 6, py + 6, TILE-8, TILE-8);
+          // Building body
+          const buildingH = TILE - 16;
+          const buildingColors = ['#7a5a3a', '#6a4a3a', '#8a6a4a', '#5a4a3a', '#9a8a7a'];
+          ctx.fillStyle = buildingColors[(x*7 + y*13) % 5];
+          ctx.fillRect(px + 4, py + 4, TILE-8, TILE-8);
+          // Windows
+          ctx.fillStyle = '#222';
+          for (let wy = 0; wy < 3; wy++) {
+            for (let wx = 0; wx < 4; wx++) {
+              ctx.fillRect(px + 8 + wx*12, py + 8 + wy*16, 8, 10);
+            }
+          }
+          // Lit windows
+          if ((x + y) % 3 === 0) {
+            ctx.fillStyle = '#ffd166';
+            ctx.fillRect(px + 8 + 12, py + 8, 8, 10);
+          }
+          if ((x + y) % 5 === 0) {
+            ctx.fillStyle = '#ffd166';
+            ctx.fillRect(px + 8 + 24, py + 24, 8, 10);
+          }
+          // Roof
+          ctx.fillStyle = '#4a2a1a';
+          ctx.fillRect(px + 4, py + 4, TILE-8, 6);
+          break;
+        case 3: // sidewalk
+          ctx.fillStyle = '#888';
+          ctx.fillRect(px, py, TILE, TILE);
+          ctx.fillStyle = '#777';
+          for (let i = 0; i < 4; i++) {
+            for (let j = 0; j < 4; j++) {
+              if ((i+j) % 2 === 0) ctx.fillRect(px + i*16, py + j*16, 14, 14);
+            }
+          }
+          break;
+        case 4: // water
+          ctx.fillStyle = '#1a4a7a';
+          ctx.fillRect(px, py, TILE, TILE);
+          ctx.fillStyle = '#2a5a8a';
+          const wave = Math.sin(performance.now()/500 + x*0.5 + y*0.3) * 3;
+          ctx.fillRect(px + 8, py + 12 + wave, 12, 2);
+          ctx.fillRect(px + 30, py + 24 + wave, 14, 2);
+          ctx.fillRect(px + 14, py + 40 + wave, 16, 2);
+          break;
+      }
+    }
+  }
+}
+
+function drawVehicle(v, isPlayer=false) {
+  const px = v.x - camera.x;
+  const py = v.y - camera.y;
+  if (px < -100 || px > W + 100 || py < -100 || py > H + 100) return;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.save();
+  ctx.translate(px + 3, py + 3);
+  ctx.rotate(v.angle);
+  ctx.fillRect(-v.w/2, -v.h/2, v.w, v.h);
+  ctx.restore();
+
+  // Car body
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(v.angle);
+  ctx.fillStyle = v.color;
+  ctx.fillRect(-v.w/2, -v.h/2, v.w, v.h);
+  // Windshield
+  ctx.fillStyle = '#112244';
+  ctx.fillRect(-v.w/2 + 3, -v.h/2 + 6, v.w - 6, 8);
+  // Rear window
+  ctx.fillRect(-v.w/2 + 3, v.h/2 - 12, v.w - 6, 6);
+  // Headlights
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-v.w/2 + 2, -v.h/2 + 1, 6, 4);
+  ctx.fillRect(v.w/2 - 8, -v.h/2 + 1, 6, 4);
+  // Taillights
+  ctx.fillStyle = '#ff3333';
+  ctx.fillRect(-v.w/2 + 2, v.h/2 - 5, 6, 3);
+  ctx.fillRect(v.w/2 - 8, v.h/2 - 5, 6, 3);
+  // Police lights
+  if (v === policeCars.find(p => p === v)) {
+    const flicker = Math.floor(performance.now() / 100) % 2;
+    ctx.fillStyle = flicker ? '#ff0000' : '#0044ff';
+    ctx.fillRect(-v.w/2 + 4, -v.h/2 + 0, 6, 3);
+    ctx.fillRect(v.w/2 - 10, -v.h/2 + 0, 6, 3);
+  }
+  ctx.restore();
+
+  // HP bar for damaged
+  if (v.hp < v.maxHp) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(px - 20, py - v.h/2 - 14, 40, 4);
+    ctx.fillStyle = v.hp > 50 ? '#6bcf7a' : '#ff6b6b';
+    ctx.fillRect(px - 20, py - v.h/2 - 14, 40 * (v.hp / v.maxHp), 4);
+  }
+}
+
+function drawPlayer() {
+  const px = player.x - camera.x;
+  const py = player.y - camera.y;
+
+  if (player.invincible > 0 && Math.floor(player.invincible * 10) % 2 === 0) return;
+  if (player.hitFlash > 0 && Math.floor(player.hitFlash * 20) % 2 === 0) return;
+
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(player.angle);
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(0, 8, 6, 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Legs (walk anim)
+  const f = player.animFrame;
+  const legSwing = player.inVehicle ? 0 : Math.sin(f * Math.PI / 2) * 3;
+  ctx.fillStyle = '#2a2a3a';
+  ctx.fillRect(-3, 2, 2, 5 + legSwing);
+  ctx.fillRect(1, 2, 2, 5 - legSwing);
+
+  // Body
+  ctx.fillStyle = '#cc3344';
+  ctx.fillRect(-4, -4, 8, 8);
+
+  // Arms
+  ctx.fillStyle = '#cc3344';
+  ctx.fillRect(-6, -3, 2, 6);
+  ctx.fillRect(4, -3, 2, 6);
+  // Gun arm
+  if (player.weapon === 'pistol') {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(4, 2, 5, 2);
+  }
+
+  // Head
+  ctx.fillStyle = '#ffd9a8';
+  ctx.fillRect(-3, -10, 6, 6);
+  // Hair
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-3, -11, 6, 3);
+
+  // Direction indicator (gun barrel for aiming)
+  if (player.weapon === 'pistol') {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(0, -1, 10, 2);
+  }
+
+  ctx.restore();
+}
+
+function drawNPC(n) {
+  if (n.dead) return;
+  const px = n.x - camera.x;
+  const py = n.y - camera.y;
+  if (px < -30 || px > W + 30 || py < -30 || py > H + 30) return;
+
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(n.angle);
+
+  // Body
+  ctx.fillStyle = n.color;
+  ctx.fillRect(-3, -3, 6, 7);
+  // Head
+  ctx.fillStyle = '#ffd9a8';
+  ctx.fillRect(-2, -7, 4, 4);
+  // Hair
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-2, -7, 4, 2);
+  ctx.restore();
+
+  // Name (only when close)
+  const d = dist(player, n);
+  if (d < 100) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(px - 18, py - 18, 36, 10);
+    ctx.fillStyle = '#e8e8d8';
+    ctx.font = '9px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(n.name, px, py - 10);
+  }
+}
+
+function drawBullet(b) {
+  const px = b.x - camera.x;
+  const py = b.y - camera.y;
+  ctx.fillStyle = '#ffd166';
+  ctx.beginPath();
+  ctx.arc(px, py, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(px, py, 1, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawParticle(p) {
+  const px = p.x - camera.x;
+  const py = p.y - camera.y;
+  ctx.globalAlpha = Math.max(0, p.life);
+  ctx.fillStyle = p.color;
+  ctx.fillRect(px - p.size/2, py - p.size/2, p.size, p.size);
+  ctx.globalAlpha = 1;
+}
+
+function drawMissionMarkers() {
+  for (let i = 0; i < missionMarkers.length; i++) {
+    const m = missionMarkers[i];
+    if (!m.active) continue;
+    const px = m.x - camera.x;
+    const py = m.y - camera.y;
+    if (px < -50 || px > W + 50 || py < -50 || py > H + 50) continue;
+    const pulse = Math.sin(performance.now() / 200) * 3;
+    // Marker
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(px, py, 15 + pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // Icon
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 10px Courier New';
+    ctx.textAlign = 'center';
+    const icons = ['🚕', '📦', '🏎️'];
+    ctx.fillText(icons[i], px, py + 3);
+  }
+}
+
+function drawMinimap() {
+  miniCtx.fillStyle = '#000';
+  miniCtx.fillRect(0, 0, 160, 160);
+  const scale = 160 / (WORLD_W * TILE);
+  const ox = -player.x * scale + 80;
+  const oy = -player.y * scale + 80;
+  // Tiles
+  for (let y = 0; y < WORLD_H; y++) {
+    for (let x = 0; x < WORLD_W; x++) {
+      const t = world[y][x];
+      const c = t === 1 ? '#555' : t === 2 ? '#7a5a3a' : t === 4 ? '#1a4a7a' : '#3d5a3d';
+      miniCtx.fillStyle = c;
+      miniCtx.fillRect(x * TILE * scale + ox, y * TILE * scale + oy, TILE * scale + 1, TILE * scale + 1);
+    }
+  }
+  // Player
+  miniCtx.fillStyle = '#ff6b35';
+  miniCtx.fillRect(78, 78, 4, 4);
+  // Vehicles
+  for (const v of vehicles) {
+    if (v.hp <= 0) continue;
+    miniCtx.fillStyle = '#4a6aaa';
+    miniCtx.fillRect(v.x * scale + ox - 1, v.y * scale + oy - 1, 3, 3);
+  }
+  // Police
+  miniCtx.fillStyle = '#1133aa';
+  for (const p of policeCars) {
+    miniCtx.fillRect(p.x * scale + ox - 1, p.y * scale + oy - 1, 3, 3);
+  }
+  // Mission markers
+  for (let i = 0; i < missionMarkers.length; i++) {
+    if (!missionMarkers[i].active) continue;
+    const m = missionMarkers[i];
+    miniCtx.fillStyle = '#ffd166';
+    miniCtx.fillRect(m.x * scale + ox - 2, m.y * scale + oy - 2, 4, 4);
+  }
+  // Border
+  miniCtx.strokeStyle = '#ffd166';
+  miniCtx.lineWidth = 2;
+  miniCtx.strokeRect(0, 0, 160, 160);
+}
+
+function render() {
+  // Sky / void beyond map
+  ctx.fillStyle = '#1a1a2a';
+  ctx.fillRect(0, 0, W, H);
+
+  drawWorld();
+  drawMissionMarkers();
+
+  // Vehicles (parked)
+  for (const c of parkedCars) {
+    if (c.dead) continue;
+    drawVehicle(c);
+  }
+  // Drivable vehicles
+  for (const v of vehicles) {
+    if (v.hp <= 0) continue;
+    if (v === player.vehicleRef) continue;
+    drawVehicle(v);
+  }
+  // Police
+  for (const p of policeCars) {
+    drawVehicle(p);
+  }
+  // Player vehicle (drawn last for layering)
+  if (player.inVehicle) {
+    drawVehicle(player.vehicleRef, true);
+  }
+  // NPCs
+  for (const n of npcs) drawNPC(n);
+  // Bullets
+  for (const b of bullets) drawBullet(b);
+  // Particles
+  for (const p of particles) drawParticle(p);
+  // Player
+  drawPlayer();
+
+  drawMinimap();
+}
+
+// ============ HUD ============
+function updateHUD() {
+  const hpEl = document.getElementById('hp');
+  hpEl.textContent = `${Math.max(0, player.hp)}/${player.maxHp}`;
+  hpEl.className = 'val ' + (player.hp < 30 ? 'low' : '');
+  document.getElementById('hpBar').style.width = `${(player.hp/player.maxHp)*100}%`;
+  document.getElementById('hpBar').style.background = player.hp < 30 ? '#ff6b6b' : '#6bcf7a';
+  document.getElementById('money').textContent = player.money;
+  document.getElementById('score').textContent = player.score;
+  document.getElementById('veh').textContent = player.inVehicle ? player.vehicleRef.name : 'Đi bộ';
+  const spd = Math.abs(player.inVehicle ? player.vehicleRef.speed : 0) * 1.5;
+  document.getElementById('spd').textContent = Math.floor(spd) + ' km/h';
+  // Wanted stars
+  const stars = document.querySelectorAll('#wanted .star');
+  stars.forEach((s, i) => s.classList.toggle('on', i < player.wanted);
+  // Mission panel
+  if (player.mission) {
+    const m = player.mission;
+    const types = { taxi: '🚕 Taxi', delivery: '📦 Giao hàng', chase: '🏎️ Đuổi bắt' };
+    document.getElementById('missionDesc').textContent = types[m.type] + (m.pickedUp ? ' (Đang giao)' : ' (Lấy khách/hàng)');
+    if (m.timer !== undefined) {
+      document.getElementById('missionObj').innerHTML = `<span class="${m.timer > 10 ? 'pending' : 'pending'}">⏱️ ${Math.max(0, Math.ceil(m.timer))}s còn lại</span>`;
+    }
+  } else {
+    document.getElementById('missionDesc').textContent = 'Nhấn M để nhận nhiệm vụ';
+    document.getElementById('missionObj').innerHTML = '<span class="pending">💡 Tip: Lái xe (E lên/xuống), F bắn, phạm tội = cảnh sát đuổi!</span>';
+  }
+}
+
+// ============ MAIN LOOP ============
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
