@@ -867,18 +867,39 @@ let gunSmoke = [];
 
 function update(dt) {
   if (!started) {
+    // T-02.8: Multiple input methods to start (Space / Enter / Click intro screen)
     if (consume(' ') || consume('enter')) {
-      started = true;
-      document.getElementById('intro').classList.add('hidden');
-      // T-02.3: Try load saved state on game start
-      if (loadState()) showMsg('💾 Save loaded', 'normal', 1.5);
-      // T-02.1: Init audio on first user interaction
-      if (initAudio()) {
-        startAmbient();
-      }
+      startGame();
+    } else if (!document.getElementById('intro').classList.contains('hidden')) {
+      // Fallback: click anywhere on intro to start
+      // (handled by intro click listener below)
     }
     return;
   }
+
+// T-02.8: Centralized game start function
+function startGame() {
+  if (started) return;
+  started = true;
+  document.getElementById('intro').classList.add('hidden');
+  // T-02.3: Try load saved state on game start
+  if (loadState()) showMsg('💾 Save loaded', 'normal', 1.5);
+  // T-02.1: Init audio on first user interaction
+  try {
+    if (initAudio()) startAmbient();
+  } catch (e) {
+    console.warn('Audio init failed (continuing without sound):', e);
+  }
+}
+
+// T-02.8: Click on intro screen to start (fallback for keyboard issues)
+document.getElementById('intro').addEventListener('click', () => {
+  if (!started) startGame();
+});
+document.getElementById('intro').addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (!started) startGame();
+}, { passive: false });
 
   // T-02.1: Mute toggle (M key)
   if (consume('m')) {
