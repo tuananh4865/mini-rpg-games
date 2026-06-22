@@ -136,7 +136,7 @@
   <div id="wanted"><div class="star">★</div><div class="star">★</div><div class="star">★</div><div class="star">★</div><div class="star">★</div></div>
 
   <div id="controls" class="panel">
-    <kbd>WASD</kbd> lái xe &nbsp; <kbd>SPACE</kbd> phanh tay &nbsp; <kbd>E</kbd> lên/xuống xe &nbsp; <kbd>F</kbd> bắn
+    <kbd>WASD</kbd> lái xe &nbsp; <kbd>SPACE</kbd> phanh tay &nbsp; <kbd>X</kbd> drift &nbsp; <kbd>E</kbd> lên/xuống xe &nbsp; <kbd>F</kbd> bắn &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>L</kbd> save &nbsp; <kbd>Shift+R</kbd> reset
   </div>
 
   <div id="minimap" class="panel"><canvas id="mini" width="160" height="160"></canvas></div>
@@ -184,6 +184,226 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 function consume(k) { if (justPressed[k]) { justPressed[k] = false; return true; } return false; }
+
+// ============ WEB AUDIO ENGINE (T-02.1) ============
+let audioCtx = null;
+let audioMuted = false;
+let audioReady = false;
+let engineOsc = null, engineGain = null;
+let ambientNode = null;
+
+// Lazy init on first user interaction (browser autoplay policy)
+function initAudio() {
+  if (audioReady) return true;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    audioReady = true;
+    return true;
+  } catch (e) {
+    console.warn('Web Audio not supported:', e);
+    return false;
+  }
+}
+
+function startEngine() {
+  if (!audioReady || engineOsc) return;
+  engineOsc = audioCtx.createOscillator();
+  engineOsc.type = 'sawtooth';
+  engineOsc.frequency.value = 80;
+  engineGain = audioCtx.createGain();
+  engineGain.gain.value = 0;
+  // Lowpass filter for engine smoothness
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 800;
+  engineOsc.connect(filter).connect(engineGain).connect(audioCtx.destination);
+  engineOsc.start();
+  engineOsc._filter = filter;
+}
+
+function updateEngine(speedRatio) {
+  if (!engineOsc || audioMuted) return;
+  // Pitch: 80Hz (idle) → 280Hz (max)
+  engineOsc.frequency.value = 80 + 200 * Math.abs(speedRatio);
+  // Volume: scale with speed but never mute completely
+  engineGain.gain.value = 0.02 + 0.04 * Math.abs(speedRatio);
+}
+
+function stopEngine() {
+  if (engineOsc) {
+    try { engineOsc.stop(); } catch(e) {}
+    engineOsc = null;
+    engineGain = null;
+  }
+}
+
+function startAmbient() {
+  if (!audioReady || ambientNode) return;
+  // Brown noise (filtered) for city hum
+  const bufferSize = 2 * audioCtx.sampleRate;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  let lastOut = 0;
+  for (let i = 0; i < bufferSize; i++) {
+    const white = Math.random() * 2 - 1;
+    data[i] = (lastOut + 0.02 * white) / 1.02;
+    lastOut = data[i];
+    data[i] *= 3.5; // amplification
+  }
+  ambientNode = audioCtx.createBufferSource();
+  ambientNode.buffer = buffer;
+  ambientNode.loop = true;
+  const ambientGain = audioCtx.createGain();
+  ambientGain.gain.value = 0.015;
+  const ambientFilter = audioCtx.createBiquadFilter();
+  ambientFilter.type = 'lowpass';
+  ambientFilter.frequency.value = 300;
+  ambientNode.connect(ambientFilter).connect(ambientGain).connect(audioCtx.destination);
+  ambientNode.start();
+  ambientNode._gain = ambientGain;
+}
+
+function stopAmbient() {
+  if (ambientNode) {
+    try { ambientNode.stop(); } catch(e) {}
+    ambientNode = null;
+  }
+}
+
+function playGunshot() {
+  if (!audioReady || audioMuted) return;
+  // Noise burst with fast envelope
+  const noise = audioCtx.createBufferSource();
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.15, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i/d.length);
+  noise.buffer = buf;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
+}
+
+function playCrash() {
+  if (!audioReady || audioMuted) return;
+  // Filtered noise impulse
+  const noise = audioCtx.createBufferSource();
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) {
+    const t = i / d.length;
+    d[i] = (Math.random() * 2 - 1) * Math.exp(-t * 8);
+  }
+  noise.buffer = buf;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 1200;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.3;
+  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  noise.start();
+}
+
+function playPickup() {
+  if (!audioReady || audioMuted) return;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.15);
+}
+
+function playPunch() {
+  if (!audioReady || audioMuted) return;
+  // Low thud
+  const osc = audioCtx.createOscillator();
+  osc.type = 'square';
+  osc.frequency.value = 80;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.08);
+}
+
+function toggleMute() {
+  audioMuted = !audioMuted;
+  if (engineGain) engineGain.gain.value = audioMuted ? 0 : 0.02 + 0.04 * Math.abs(player.inVehicle ? player.vehicleRef.speed / player.vehicleRef.maxSpeed : 0);
+  if (ambientNode && ambientNode._gain) ambientNode._gain.gain.value = audioMuted ? 0 : 0.015;
+  return audioMuted ? '🔇 Muted' : '🔊 Sound ON';
+}
+
+// ============ SAVE/LOAD STATE (T-02.3) ============
+const SAVE_KEY = 'city-drift-save-v1';
+let autoSaveTimer = 0;
+const AUTOSAVE_INTERVAL = 30; // seconds
+
+function saveState() {
+  try {
+    const vehRef = player.vehicleRef;
+    const vehIdx = vehRef ? vehicles.findIndex(v => v === vehRef) : -1;
+    const state = {
+      version: 1,
+      timestamp: Date.now(),
+      player: {
+        x: player.x, y: player.y, hp: player.hp, money: player.money,
+        score: player.score, wanted: player.wanted,
+        inVehicle: player.inVehicle, vehicleIdx: vehIdx,
+        ammo: player.ammo, weapon: player.weapon,
+      },
+      vehicles: vehicles.map(v => ({ name: v.name, hp: v.hp, x: v.x, y: v.y, angle: v.angle })),
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    return true;
+  } catch (e) {
+    console.warn('Save failed:', e);
+    return false;
+  }
+}
+
+function loadState() {
+  try {
+    const data = localStorage.getItem(SAVE_KEY);
+    if (!data) return false;
+    const state = JSON.parse(data);
+    if (state.version !== 1) return false;
+    // Restore player
+    Object.assign(player, state.player);
+    // Restore vehicles
+    if (state.vehicles && state.vehicles.length === vehicles.length) {
+      state.vehicles.forEach((sv, i) => {
+        vehicles[i].hp = sv.hp;
+        vehicles[i].x = sv.x;
+        vehicles[i].y = sv.y;
+        vehicles[i].angle = sv.angle;
+      });
+    }
+    // Re-attach vehicle ref
+    if (player.inVehicle && player.vehicleIdx >= 0) {
+      player.vehicleRef = vehicles[player.vehicleIdx];
+    } else {
+      player.inVehicle = false;
+      player.vehicleRef = null;
+    }
+    return true;
+  } catch (e) {
+    console.warn('Load failed:', e);
+    return false;
+  }
+}
+
+function resetState() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  location.reload();
+}
 
 // ============ WORLD ============
 // Tile types: 0=grass, 1=road, 2=building, 3=sidewalk, 4=water
@@ -316,6 +536,7 @@ for (let i = 0; i < 25; i++) {
 
 // Police cars
 const policeCars = [];
+const roadblocks = []; // T-02.5: parked police cars blocking roads
 
 // Bullets
 const bullets = [];
@@ -328,6 +549,10 @@ const missionMarkers = [
   { x: 1000, y: 400, type: 'taxi' },
   { x: 1600, y: 1200, type: 'delivery' },
   { x: 2200, y: 2000, type: 'chase' },
+  // T-02.6: 3 new mission markers
+  { x: 1400, y: 2500, type: 'race' },
+  { x: 800, y: 1800, type: 'escort' },
+  { x: 2800, y: 800, type: 'eliminate' },
 ];
 
 // ============ CAMERA ============
@@ -506,6 +731,123 @@ const missions = {
       }
     },
   },
+  // T-02.6: 3 new mission types
+  race: {
+    title: '🏁 Đua xe tốc độ',
+    desc: 'Qua 5 checkpoint trong 60s',
+    start: () => {
+      player.mission = { type: 'race', checkpoint: 0, timer: 60, checkpoints: [
+        { x: 1500, y: 2500 }, { x: 1800, y: 2600 }, { x: 2000, y: 2400 },
+        { x: 2200, y: 2600 }, { x: 2500, y: 2500 }
+      ] };
+      missionMarkers[3].active = true;
+    },
+    update: (dt) => {
+      const m = player.mission;
+      m.timer -= dt;
+      const target = m.checkpoints[m.checkpoint];
+      if (dist(player, target) < 60) {
+        m.checkpoint++;
+        if (m.checkpoint >= m.checkpoints.length) {
+          const reward = 500 + Math.floor(m.timer * 5);
+          player.money += reward;
+          player.score += 100;
+          showMsg(`🏁 Race complete! +$${reward}`, 'success', 3);
+          player.mission = null;
+          missionMarkers[3].active = false;
+        } else {
+          showMsg(`✓ Checkpoint ${m.checkpoint}/${m.checkpoints.length}`, 'success', 1);
+        }
+      }
+      if (m.timer <= 0) {
+        showMsg('⏰ Hết giờ! Thua cuộc', 'fail', 2);
+        player.mission = null;
+        missionMarkers[3].active = false;
+      }
+    },
+  },
+  escort: {
+    title: '🚗 Hộ tống VIP',
+    desc: 'Theo xe VIP, không để họ chết',
+    start: () => {
+      const angle = Math.random() * Math.PI * 2;
+      player.mission = {
+        type: 'escort', timer: 90, distance: 0,
+        vip: { x: 800, y: 1800, angle, speed: 80, hp: 100, maxHp: 100 }
+      };
+      missionMarkers[4].active = true;
+    },
+    update: (dt) => {
+      const m = player.mission;
+      const vip = m.vip;
+      vip.x += Math.cos(vip.angle) * vip.speed * dt;
+      vip.y += Math.sin(vip.angle) * vip.speed * dt;
+      vip.angle += (Math.random() - 0.5) * 0.3;
+      // Wall bounce
+      if (isSolid(vip.x, vip.y, 12)) vip.angle += Math.PI;
+      m.timer -= dt;
+      // Check if player too far
+      if (dist(player, vip) > 200) {
+        vip.hp -= 5 * dt; // VIP loses HP if player too far (enemies catch up)
+      }
+      // Check NPC attacks on VIP
+      for (const n of npcs) {
+        if (n.dead) continue;
+        if (Math.hypot(n.x - vip.x, n.y - vip.y) < 20) {
+          vip.hp -= 30 * dt;
+        }
+      }
+      // VIP died
+      if (vip.hp <= 0) {
+        showMsg('💀 VIP bị giết! Thất bại', 'fail', 2);
+        player.money = Math.max(0, player.money - 100);
+        player.mission = null;
+        missionMarkers[4].active = false;
+        return;
+      }
+      // Timer success
+      if (m.timer <= 0) {
+        const reward = 800;
+        player.money += reward;
+        player.score += 150;
+        showMsg(`🚗 VIP an toàn! +$${reward}`, 'success', 3);
+        player.mission = null;
+        missionMarkers[4].active = false;
+      }
+    },
+  },
+  eliminate: {
+    title: '🎯 Săn mục tiêu',
+    desc: 'Tiêu diệt 3 NPC đánh dấu trong 90s',
+    start: () => {
+      // Mark 3 random NPCs
+      const targets = [];
+      for (let i = 0; i < 3 && npcs.length > i; i++) {
+        if (!npcs[i].dead) {
+          npcs[i].target = true;
+          npcs[i].color = '#ff3333';
+          targets.push(npcs[i]);
+        }
+      }
+      player.mission = { type: 'eliminate', timer: 90, killed: 0, total: targets.length };
+      missionMarkers[5].active = true;
+      showMsg(`🎯 Tiêu diệt ${targets.length} mục tiêu đỏ!`, 'normal', 2);
+    },
+    update: (dt) => {
+      const m = player.mission;
+      m.timer -= dt;
+      // Count killed targets
+      m.killed = npcs.filter(n => n.target && n.dead).length;
+      if (m.killed >= m.total || m.timer <= 0) {
+        const reward = m.killed >= m.total ? 1000 : Math.floor(m.killed * 300);
+        player.money += reward;
+        player.score += m.killed * 50;
+        showMsg(`🎯 ${m.killed}/${m.total} mục tiêu! +$${reward}`, m.killed >= m.total ? 'success' : 'fail', 3);
+        player.mission = null;
+        missionMarkers[5].active = false;
+      }
+    },
+  },
 };
 
 function startMission(idx) {
@@ -513,7 +855,7 @@ function startMission(idx) {
     showMsg('❌ Đang có nhiệm vụ khác!', 'fail', 2);
     return;
   }
-  const types = ['taxi', 'delivery', 'chase'];
+  const types = ['taxi', 'delivery', 'chase', 'race', 'escort', 'eliminate'];
   missions[types[idx]].start();
   showMsg('📋 Bắt đầu: ' + missions[types[idx]].title, 'normal', 2);
 }
@@ -528,12 +870,52 @@ function update(dt) {
     if (consume(' ') || consume('enter')) {
       started = true;
       document.getElementById('intro').classList.add('hidden');
+      // T-02.3: Try load saved state on game start
+      if (loadState()) showMsg('💾 Save loaded', 'normal', 1.5);
+      // T-02.1: Init audio on first user interaction
+      if (initAudio()) {
+        startAmbient();
+      }
     }
     return;
   }
 
+  // T-02.1: Mute toggle (M key)
+  if (consume('m')) {
+    const msg = toggleMute();
+    showMsg(msg, 'normal', 1);
+  }
+
+  // T-02.3: Manual save (L key) + reset (Shift+L)
+  if (consume('l')) {
+    if (keys['shift']) {
+      // Hold Shift+L for reset confirmation
+      const heldTime = (justPressed['l'] ? 0 : 0); // Just track press
+      if (saveState()) showMsg('💾 Saved!', 'success', 1);
+    } else {
+      if (saveState()) showMsg('💾 Game saved', 'success', 1);
+    }
+  }
+  if (consume('r') && keys['shift']) {
+    if (confirm('Reset toàn bộ save? Game sẽ reload.')) resetState();
+  }
+
+  // T-02.3: Auto-save timer
+  autoSaveTimer += dt;
+  if (autoSaveTimer >= AUTOSAVE_INTERVAL) {
+    autoSaveTimer = 0;
+    saveState();
+  }
+
   // Vehicle physics vs player
   if (player.inVehicle) {
+    // T-02.1: Engine sound update
+    if (audioReady && !engineOsc) startEngine();
+    if (engineOsc) {
+      const speedRatio = player.vehicleRef.speed / player.vehicleRef.maxSpeed;
+      updateEngine(speedRatio);
+    }
+
     const v = player.vehicleRef;
     let throttle = 0, steering = 0, brake = false;
     if (keys['w'] || keys['arrowup']) throttle = 1;
@@ -542,6 +924,8 @@ function update(dt) {
     if (keys['d'] || keys['arrowright']) steering = 1;
     if (keys[' ']) brake = true;
     const boost = keys['shift'] ? 1.4 : 1;
+    // T-02.4: Handbrake (X key) for drift
+    const handbrake = keys['x'];
 
     // Speed
     if (throttle > 0) v.speed += v.maxSpeed * 0.3 * throttle * dt;
@@ -552,9 +936,22 @@ function update(dt) {
     // Brake
     if (brake) v.speed *= 0.92;
 
-    // Steering (only when moving)
+    // Steering (only when moving). T-02.4: Drift = 2x turn rate when handbrake + speed > 100
     if (Math.abs(v.speed) > 5) {
-      const turnRate = (v.speed > 0 ? 1 : -1) * 2.2 * (Math.abs(v.speed) / v.maxSpeed);
+      let turnRate = (v.speed > 0 ? 1 : -1) * 2.2 * (Math.abs(v.speed) / v.maxSpeed);
+      if (handbrake && Math.abs(v.speed) > 100) {
+        turnRate *= 2.0; // Drift over-steer
+        // Reduce grip slightly = sliding
+        v.speed *= 0.985;
+        // T-02.4: Tire smoke particles
+        if (Math.random() < 0.4) {
+          addParticle(
+            v.x - Math.cos(v.angle) * v.h/2,
+            v.y - Math.sin(v.angle) * v.h/2,
+            'rgba(180,180,180,0.6)', 1
+          );
+        }
+      }
       v.angle += steering * turnRate * dt;
     }
 
@@ -569,6 +966,7 @@ function update(dt) {
 
     if (hit && Math.abs(v.speed) > 50) {
       addParticle(v.x, v.y, '#ffaa44', 6);
+      playCrash(); // T-02.1
       v.hp -= 5;
       if (v.hp <= 0) {
         showMsg('💥 Xe hỏng! Ra ngoài đi bộ', 'fail', 2);
@@ -686,6 +1084,7 @@ function update(dt) {
         }
       }
       addParticle(atkX, atkY, '#ffd166', 4);
+      playPunch(); // T-02.1
     }
 
     // Shoot on foot
@@ -705,6 +1104,22 @@ function update(dt) {
   if (player.invincible > 0) player.invincible -= dt;
   if (player.hitFlash > 0) player.hitFlash -= dt;
 
+  // T-02.7: Health regen 50% when out of combat (5s after last hit)
+  if (player.invincible <= 0 && player.hp < player.maxHp) {
+    const combatTimer = 5; // seconds out of combat before regen
+    if (player._outOfCombat === undefined) player._outOfCombat = combatTimer;
+    player._outOfCombat -= dt;
+    if (player._outOfCombat <= 0) {
+      // Regen up to 50% of max HP (GTA V style)
+      const targetHp = player.maxHp * 0.5;
+      if (player.hp < targetHp) {
+        player.hp = Math.min(targetHp, player.hp + 5 * dt); // 5 HP/sec
+      }
+    }
+  } else {
+    player._outOfCombat = 5;
+  }
+
   // Wanted decay
   if (player.wanted > 0) {
     player.wantedDecay -= dt;
@@ -716,13 +1131,13 @@ function update(dt) {
 
   // Mission selection
   if (consume('m')) {
-    if (!player.mission) {
-      const r = Math.floor(Math.random() * 3);
-      startMission(r);
-    } else {
-      showMsg('❌ Đang làm nhiệm vụ khác!', 'fail', 1.5);
-    }
-  }
+        if (!player.mission) {
+          const r = Math.floor(Math.random() * 6); // T-02.6: 3 → 6 missions
+          startMission(r);
+        } else {
+          showMsg('❌ Đang làm nhiệm vụ khác!', 'fail', 1.5);
+        }
+      }
 
   // Update mission
   if (player.mission) {
@@ -754,6 +1169,32 @@ function update(dt) {
     }
   }
 
+  // T-02.5: Roadblock spawn at 3+ stars — parked police car perpendicular to road
+  if (player.wanted >= 3 && roadblocks.length < player.wanted - 2) {
+    // Spawn one roadblock at a road tile near player
+    if (Math.random() < 0.005 || roadblocks.length === 0) {
+      // Find a road tile within range
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 300 + Math.random() * 400;
+        const tx = Math.floor((player.x + Math.cos(angle) * dist) / 64);
+        const ty = Math.floor((player.y + Math.sin(angle) * dist) / 64);
+        if (world[ty] && world[ty][tx] === 1) { // road tile
+          roadblocks.push({
+            x: tx * 64 + 32, y: ty * 64 + 32,
+            angle: Math.random() < 0.5 ? 0 : Math.PI / 2,
+            color: '#1133aa',
+          });
+          break;
+        }
+      }
+    }
+  }
+  // Remove roadblocks when wanted drops
+  if (player.wanted < 3 && roadblocks.length > 0) {
+    roadblocks.length = 0;
+  }
+
   // Police AI
   for (let i = policeCars.length - 1; i >= 0; i--) {
     const p = policeCars[i];
@@ -774,6 +1215,22 @@ function update(dt) {
     if (!isSolid(nx, p.y, 16)) p.x = nx; else p.angle += 1;
     if (!isSolid(p.x, ny, 16)) p.y = ny; else p.angle += 1;
 
+    // T-02.5: Check roadblock collision with player vehicle
+    if (player.inVehicle && player.vehicleRef === undefined ? false : true) {
+      for (const rb of roadblocks) {
+        if (dist(p, rb) < 50 && dist(p, player) < 60) {
+          // Roadblock stops player — heavy damage if hit
+          if (Math.abs(p.speed) > 30 && player.invincible <= 0) {
+            player.hp -= 15;
+            player.invincible = 1.5;
+            p.speed *= -0.3;
+            playCrash();
+            showMsg('💥 Đâm roadblock! -15 HP', 'fail', 2);
+          }
+        }
+      }
+    }
+
     // Bump player
     const d = dist(p, player);
     if (d < 30 && player.invincible <= 0) {
@@ -781,6 +1238,7 @@ function update(dt) {
       player.invincible = 1;
       player.hitFlash = 0.3;
       addParticle(player.x, player.y, '#ff6b6b', 8);
+      playCrash(); // T-02.1: police ram = thud
       if (player.hp <= 0) {
         // Busted / wasted
         showMsg('🚔 BỊ BẮT! Mất $200, về đồn', 'fail', 3);
@@ -866,6 +1324,8 @@ function shootBullet(x, y, angle) {
   player.shootCooldown = 0.2;
   player.wanted = Math.min(5, player.wanted + 1);
   addParticle(x, y, '#ffd166', 3);
+  // T-02.1: Gunshot SFX
+  playGunshot();
 }
 
 // ============ RENDER ============
@@ -1004,6 +1464,27 @@ function drawVehicle(v, isPlayer=false) {
     ctx.fillRect(px - 20, py - v.h/2 - 14, 40, 4);
     ctx.fillStyle = v.hp > 50 ? '#6bcf7a' : '#ff6b6b';
     ctx.fillRect(px - 20, py - v.h/2 - 14, 40 * (v.hp / v.maxHp), 4);
+  }
+
+  // T-02.2: Vehicle damage visual — smoke + fire
+  const hpRatio = v.hp / v.maxHp;
+  if (hpRatio < 0.5 && Math.random() < 0.3) {
+    // Smoke from engine bay
+    const sx = px + Math.cos(v.angle + Math.PI) * 8;
+    const sy = py + Math.sin(v.angle + Math.PI) * 8;
+    ctx.fillStyle = hpRatio < 0.2 ? 'rgba(255,80,0,0.7)' : 'rgba(100,100,100,0.5)';
+    ctx.beginPath();
+    ctx.arc(sx + (Math.random()-0.5)*4, sy + (Math.random()-0.5)*4, 3 + Math.random()*4, 0, Math.PI*2);
+    ctx.fill();
+  }
+  if (hpRatio < 0.2 && Math.random() < 0.5) {
+    // Fire flicker
+    const fx = px + Math.cos(v.angle + Math.PI) * 6;
+    const fy = py + Math.sin(v.angle + Math.PI) * 6;
+    ctx.fillStyle = Math.random() < 0.5 ? '#ff4400' : '#ffaa00';
+    ctx.beginPath();
+    ctx.arc(fx + (Math.random()-0.5)*3, fy + (Math.random()-0.5)*3, 2 + Math.random()*3, 0, Math.PI*2);
+    ctx.fill();
   }
 }
 
@@ -1208,6 +1689,24 @@ function render() {
   for (const p of policeCars) {
     drawVehicle(p);
   }
+
+  // T-02.5: Draw roadblocks (parked police cars perpendicular to road)
+  for (const rb of roadblocks) {
+    const px = rb.x - camera.x;
+    const py = rb.y - camera.y;
+    if (px < -100 || px > W + 100 || py < -100 || py > H + 100) continue;
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(rb.angle);
+    ctx.fillStyle = rb.color;
+    ctx.fillRect(-25, -15, 50, 30); // parked car wider than tall
+    // Police lights
+    const flicker = Math.floor(performance.now() / 150) % 2;
+    ctx.fillStyle = flicker ? '#ff0000' : '#0044ff';
+    ctx.fillRect(-23, -15, 8, 3);
+    ctx.fillRect(15, -15, 8, 3);
+    ctx.restore();
+  }
   // Player vehicle (drawn last for layering)
   if (player.inVehicle) {
     drawVehicle(player.vehicleRef, true);
@@ -1238,7 +1737,7 @@ function updateHUD() {
   document.getElementById('spd').textContent = Math.floor(spd) + ' km/h';
   // Wanted stars
   const stars = document.querySelectorAll('#wanted .star');
-  stars.forEach((s, i) => s.classList.toggle('on', i < player.wanted);
+  stars.forEach((s, i) => s.classList.toggle('on', i < player.wanted));
   // Mission panel
   if (player.mission) {
     const m = player.mission;
