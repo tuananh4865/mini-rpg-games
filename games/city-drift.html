@@ -136,14 +136,14 @@
   <div id="wanted"><div class="star">★</div><div class="star">★</div><div class="star">★</div><div class="star">★</div><div class="star">★</div></div>
 
   <div id="controls" class="panel">
-    <kbd>WASD</kbd> lái xe &nbsp; <kbd>SPACE</kbd> phanh tay &nbsp; <kbd>X</kbd> drift &nbsp; <kbd>E</kbd> lên/xuống xe &nbsp; <kbd>F</kbd> bắn &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>L</kbd> save &nbsp; <kbd>Shift+R</kbd> reset
+    <kbd>WASD</kbd> lái xe &nbsp; <kbd>SPACE</kbd> phanh tay &nbsp; <kbd>X</kbd> drift &nbsp; <kbd>E</kbd> lên/xuống xe &nbsp; <kbd>F</kbd> bắn &nbsp; <kbd>J</kbd> nhiệm vụ &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>L</kbd> save &nbsp; <kbd>Shift+R</kbd> reset
   </div>
 
   <div id="minimap" class="panel"><canvas id="mini" width="160" height="160"></canvas></div>
 
   <div id="mission" class="panel">
     <div class="title">📋 Nhiệm vụ</div>
-    <div class="desc" id="missionDesc">Nhấn M để bắt đầu nhiệm vụ</div>
+    <div class="desc" id="missionDesc">Nhấn J để bắt đầu nhiệm vụ</div>
     <div class="obj" id="missionObj"></div>
   </div>
 
@@ -158,7 +158,7 @@
       <kbd>SPACE</kbd> phanh tay / đấm<br>
       <kbd>E</kbd> lên xuống xe / tương tác<br>
       <kbd>F</kbd> bắn / tấn công<br>
-      <kbd>M</kbd> bản đồ nhiệm vụ<br>
+      <kbd>J</kbd> nhiệm vụ (Job)<br>
       <kbd>SHIFT</kbd> boost
     </div>
   </div>
@@ -482,29 +482,39 @@ const player = {
   alive: true,
 };
 
-const vehicles = [
-  { name: 'Sedan', x: 600, y: 600, angle: 0, speed: 0, maxSpeed: 280, color: '#4a6aaa', w: 32, h: 50, hp: 100 },
-  { name: 'Sports', x: 1200, y: 900, angle: 0, speed: 0, maxSpeed: 380, color: '#cc3344', w: 30, h: 48, hp: 100 },
-  { name: 'Truck', x: 800, y: 1800, angle: 0, speed: 0, maxSpeed: 220, color: '#5a8a3a', w: 36, h: 60, hp: 150 },
-  { name: 'Motor', x: 2000, y: 400, angle: 0, speed: 0, maxSpeed: 320, color: '#222', w: 16, h: 32, hp: 60 },
+// FIX #4: Vehicle defs store spawn points; actual position assigned by safe spawner below
+const vehicleDefs = [
+  { name: 'Sedan',  maxSpeed: 280, color: '#4a6aaa', w: 32, h: 50, hp: 100 },
+  { name: 'Sports', maxSpeed: 380, color: '#cc3344', w: 30, h: 48, hp: 100 },
+  { name: 'Truck',  maxSpeed: 220, color: '#5a8a3a', w: 36, h: 60, hp: 150 },
+  { name: 'Motor',  maxSpeed: 320, color: '#222',   w: 16, h: 32, hp: 60  },
 ];
+const vehicles = [];
+for (const def of vehicleDefs) {
+  let spawned = false;
+  for (let attempt = 0; attempt < 50 && !spawned; attempt++) {
+    const pos = findClearSpawnPos(def.w, def.h);
+    if (pos) {
+      // FIX #3 (bike orientation): Motorbike faces UP initially so its "front" = -y axis
+      // Cars have long axis = h (vertical) — angle=0 means pointing up
+      vehicles.push({ ...def, x: pos.x, y: pos.y, angle: -Math.PI/2, speed: 0 });
+      spawned = true;
+    }
+  }
+  if (!spawned) {
+    // Fallback: park at center of map (very unlikely to fail 50 attempts)
+    vehicles.push({ ...def, x: WORLD_W*TILE/2, y: WORLD_H*TILE/2, angle: -Math.PI/2, speed: 0 });
+  }
+}
 
-// Add some parked cars (decor + obstacles)
+// Add some parked cars (decor + obstacles) — FIX #2: use safe spawner
 const parkedCars = [];
 for (let i = 0; i < 40; i++) {
-  // Find road tile
-  let px, py;
-  for (let attempt = 0; attempt < 20; attempt++) {
-    px = Math.floor(Math.random() * WORLD_W);
-    py = Math.floor(Math.random() * WORLD_H);
-    if (world[py][px] === 1) break;
-    px = -1;
-  }
-  if (px < 0) continue;
+  const pos = findClearSpawnPos(30, 48);
+  if (!pos) continue;
   const colors = ['#888', '#666', '#aaa', '#445', '#557', '#776', '#553'];
   parkedCars.push({
-    x: px * TILE + TILE/2 + (Math.random()-0.5) * 30,
-    y: py * TILE + TILE/2 + (Math.random()-0.5) * 30,
+    x: pos.x, y: pos.y,
     angle: [0, Math.PI/2][Math.floor(Math.random()*2)],
     color: colors[Math.floor(Math.random() * colors.length)],
     w: 30, h: 48,
@@ -563,6 +573,40 @@ function updateCamera() {
 }
 
 // ============ HELPERS ============
+// FIX #2/#4: Check if a position is clear for spawning (not inside building or too close to one)
+function isPositionClear(x, y, w, h) {
+  // Check center + 4 corners
+  const points = [
+    [x, y],
+    [x + w/2, y + h/2], [x - w/2, y + h/2],
+    [x + w/2, y - h/2], [x - w/2, y - h/2],
+  ];
+  for (const [px, py] of points) {
+    if (isSolid(px, py, 8)) return false;
+  }
+  // Also check neighboring tiles (1 tile radius)
+  const tx = Math.floor(x / TILE);
+  const ty = Math.floor(y / TILE);
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const t = tileAt((tx+dx)*TILE + TILE/2, (ty+dy)*TILE + TILE/2);
+      if (t === 2) return false; // building
+    }
+  }
+  return true;
+}
+
+function findClearSpawnPos(w, h, maxAttempts = 30) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const tx = Math.floor(Math.random() * WORLD_W);
+    const ty = Math.floor(Math.random() * WORLD_H);
+    if (world[ty][tx] !== 1) continue; // must be on road
+    const x = tx * TILE + TILE/2 + (Math.random()-0.5) * 20;
+    const y = ty * TILE + TILE/2 + (Math.random()-0.5) * 20;
+    if (isPositionClear(x, y, w, h)) return { x, y };
+  }
+  return null;
+}
 function tileAt(px, py) {
   const tx = Math.floor(px / TILE);
   const ty = Math.floor(py / TILE);
@@ -865,19 +909,7 @@ let started = false;
 let policeSpawnTimer = 0;
 let gunSmoke = [];
 
-function update(dt) {
-  if (!started) {
-    // T-02.8: Multiple input methods to start (Space / Enter / Click intro screen)
-    if (consume(' ') || consume('enter')) {
-      startGame();
-    } else if (!document.getElementById('intro').classList.contains('hidden')) {
-      // Fallback: click anywhere on intro to start
-      // (handled by intro click listener below)
-    }
-    return;
-  }
-
-// T-02.8: Centralized game start function
+// T-02.8: Centralized game start function (MOVED OUT of update() so it's global)
 function startGame() {
   if (started) return;
   started = true;
@@ -900,6 +932,16 @@ document.getElementById('intro').addEventListener('touchstart', (e) => {
   e.preventDefault();
   if (!started) startGame();
 }, { passive: false });
+
+function update(dt) {
+  if (!started) {
+    // T-02.8: Multiple input methods to start (Space / Enter / Click intro screen)
+    if (consume(' ') || consume('enter')) {
+      startGame();
+      return;
+    }
+    return;
+  }
 
   // T-02.1: Mute toggle (M key)
   if (consume('m')) {
@@ -1150,8 +1192,8 @@ document.getElementById('intro').addEventListener('touchstart', (e) => {
     }
   }
 
-  // Mission selection
-  if (consume('m')) {
+  // FIX #5: Mission trigger moved to J key (was conflicting with M=mute)
+  if (consume('j')) {
         if (!player.mission) {
           const r = Math.floor(Math.random() * 6); // T-02.6: 3 → 6 missions
           startMission(r);
@@ -1516,51 +1558,56 @@ function drawPlayer() {
   if (player.invincible > 0 && Math.floor(player.invincible * 10) % 2 === 0) return;
   if (player.hitFlash > 0 && Math.floor(player.hitFlash * 20) % 2 === 0) return;
 
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(player.angle);
+  // FIX #1: Body stays UPRIGHT. Only gun arm rotates toward aim direction.
+  // Player always faces UP on screen (like GTA classic top-down view).
 
-  // Shadow
+  // Shadow (always under feet)
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.beginPath();
-  ctx.ellipse(0, 8, 6, 2, 0, 0, Math.PI * 2);
+  ctx.ellipse(px, py + 8, 6, 2, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Legs (walk anim)
   const f = player.animFrame;
   const legSwing = player.inVehicle ? 0 : Math.sin(f * Math.PI / 2) * 3;
   ctx.fillStyle = '#2a2a3a';
-  ctx.fillRect(-3, 2, 2, 5 + legSwing);
-  ctx.fillRect(1, 2, 2, 5 - legSwing);
+  ctx.fillRect(px - 3, py + 2, 2, 5 + legSwing);
+  ctx.fillRect(px + 1, py + 2, 2, 5 - legSwing);
 
-  // Body
+  // Body (UPRIGHT - no rotation)
   ctx.fillStyle = '#cc3344';
-  ctx.fillRect(-4, -4, 8, 8);
+  ctx.fillRect(px - 4, py - 4, 8, 8);
 
   // Arms
   ctx.fillStyle = '#cc3344';
-  ctx.fillRect(-6, -3, 2, 6);
-  ctx.fillRect(4, -3, 2, 6);
-  // Gun arm
-  if (player.weapon === 'pistol') {
-    ctx.fillStyle = '#222';
-    ctx.fillRect(4, 2, 5, 2);
-  }
+  ctx.fillRect(px - 6, py - 3, 2, 6);
+  ctx.fillRect(px + 4, py - 3, 2, 6);
 
   // Head
   ctx.fillStyle = '#ffd9a8';
-  ctx.fillRect(-3, -10, 6, 6);
+  ctx.fillRect(px - 3, py - 10, 6, 6);
   // Hair
   ctx.fillStyle = '#222';
-  ctx.fillRect(-3, -11, 6, 3);
+  ctx.fillRect(px - 3, py - 11, 6, 3);
 
-  // Direction indicator (gun barrel for aiming)
+  // Direction indicator: ONLY gun barrel rotates toward aim direction
+  // Use 8-way direction based on player.angle
   if (player.weapon === 'pistol') {
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(player.angle);
     ctx.fillStyle = '#222';
     ctx.fillRect(0, -1, 10, 2);
+    ctx.restore();
+  } else {
+    // No weapon: show small facing arrow
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(player.angle);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(0, -1, 8, 2);
+    ctx.restore();
   }
-
-  ctx.restore();
 }
 
 function drawNPC(n) {
@@ -1762,14 +1809,22 @@ function updateHUD() {
   // Mission panel
   if (player.mission) {
     const m = player.mission;
-    const types = { taxi: '🚕 Taxi', delivery: '📦 Giao hàng', chase: '🏎️ Đuổi bắt' };
-    document.getElementById('missionDesc').textContent = types[m.type] + (m.pickedUp ? ' (Đang giao)' : ' (Lấy khách/hàng)');
+    const types = {
+      taxi: '🚕 Taxi', delivery: '📦 Giao hàng', chase: '🏎️ Đuổi bắt',
+      race: '🏁 Đua xe', escort: '🚗 Hộ tống', eliminate: '🎯 Tiêu diệt'
+    };
+    const typeName = types[m.type] || ('📋 ' + m.type);
+    const stage = m.pickedUp ? ' (Đang giao)' : ' (Lấy khách/hàng)';
+    document.getElementById('missionDesc').textContent = typeName + stage;
     if (m.timer !== undefined) {
-      document.getElementById('missionObj').innerHTML = `<span class="${m.timer > 10 ? 'pending' : 'pending'}">⏱️ ${Math.max(0, Math.ceil(m.timer))}s còn lại</span>`;
+      document.getElementById('missionObj').innerHTML = `<span class="pending">⏱️ ${Math.max(0, Math.ceil(m.timer))}s còn lại</span>`;
+    } else {
+      document.getElementById('missionObj').innerHTML = '';
     }
   } else {
-    document.getElementById('missionDesc').textContent = 'Nhấn M để nhận nhiệm vụ';
-    document.getElementById('missionObj').innerHTML = '<span class="pending">💡 Tip: Lái xe (E lên/xuống), F bắn, phạm tội = cảnh sát đuổi!</span>';
+    // FIX #5: Mission key is now J (was M but conflicted with mute)
+    document.getElementById('missionDesc').textContent = 'Nhấn J để nhận nhiệm vụ';
+    document.getElementById('missionObj').innerHTML = '<span class="pending">💡 Tip: WASD đi bộ, E lên/xuống xe, F bắn (cần súng), Shift+SPACE phanh tay, M mute, L save, Shift+R reset</span>';
   }
 }
 
