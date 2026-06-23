@@ -504,7 +504,7 @@ function saveState() {
         inVehicle: player.inVehicle, vehicleIdx: vehIdx,
         ammo: player.ammo, weapon: player.weapon,
       },
-      vehicles: vehicles.map(v => ({ name: v.name, hp: v.hp, x: v.x, y: v.y, angle: v.angle })),
+      vehicles: vehicles.map(v => ({ name: v.name, hp: v.hp, x: v.x, y: v.y, angle: v.heading })),
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(state));
     return true;
@@ -528,7 +528,7 @@ function loadState() {
         vehicles[i].hp = sv.hp;
         vehicles[i].x = sv.x;
         vehicles[i].y = sv.y;
-        vehicles[i].angle = sv.angle;
+        vehicles[i].angle = sv.heading;
       });
     }
     // Re-attach vehicle ref
@@ -627,12 +627,89 @@ const player = {
   alive: true,
 };
 
-// FIX #4: Vehicle defs store spawn points; actual position assigned by safe spawner below
+// FIX v1.4: Procedural infinite city — must be declared BEFORE any spawn function
+const CHUNK_SIZE = 8;
+const CHUNK_TILES = CHUNK_SIZE;
+const chunkCache = new Map();
+const MAX_CACHED_CHUNKS = 256;
+function chunkKey(cx, cy) { return `${cx},${cy}`; }
+function mulberry32(seed) {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seedFromChunk(cx, cy) {
+  let h = (cx * 374761393) ^ (cy * 668265263);
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+function generateChunk(cx, cy) {
+  const key = chunkKey(cx, cy);
+  if (chunkCache.has(key)) return chunkCache.get(key);
+  const rng = mulberry32(seedFromChunk(cx, cy));
+  const chunk = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+  chunk.fill(0);
+  for (let ty = 0; ty < CHUNK_SIZE; ty++) {
+    for (let tx = 0; tx < CHUNK_SIZE; tx++) {
+      if (cx % 2 === 0) chunk[ty * CHUNK_SIZE + tx] = 1;
+      if (cy % 2 === 0) chunk[ty * CHUNK_SIZE + tx] = 1;
+    }
+  }
+  for (let ty = 1; ty < CHUNK_SIZE - 1; ty++) {
+    for (let tx = 1; tx < CHUNK_SIZE - 1; tx++) {
+      if (chunk[ty * CHUNK_SIZE + tx] === 1) continue;
+      if (ty === 1 || ty === CHUNK_SIZE - 2 || tx === 1 || tx === CHUNK_SIZE - 2) {
+        chunk[ty * CHUNK_SIZE + tx] = 3;
+      } else if (rng() < 0.85) {
+        chunk[ty * CHUNK_SIZE + tx] = 2;
+      } else {
+        chunk[ty * CHUNK_SIZE + tx] = 0;
+      }
+    }
+  }
+  if (seedFromChunk(cx, cy) % 13 === 0) {
+    const pondX = 2 + Math.floor(rng() * (CHUNK_SIZE - 4));
+    const pondY = 2 + Math.floor(rng() * (CHUNK_SIZE - 4));
+    if (pondX < CHUNK_SIZE && pondY < CHUNK_SIZE) {
+      chunk[pondY * CHUNK_SIZE + pondX] = 4;
+      if (pondX+1 < CHUNK_SIZE) chunk[pondY * CHUNK_SIZE + (pondX+1)] = 4;
+      if (pondY+1 < CHUNK_SIZE) chunk[(pondY+1) * CHUNK_SIZE + pondX] = 4;
+    }
+  }
+  if (chunkCache.size >= MAX_CACHED_CHUNKS) {
+    const toDelete = Math.floor(MAX_CACHED_CHUNKS / 4);
+    let i = 0;
+    for (const k of chunkCache.keys()) {
+      if (i++ >= toDelete) break;
+      chunkCache.delete(k);
+    }
+  }
+  chunkCache.set(key, chunk);
+  return chunk;
+}
+function getTileAt(px, py) {
+  const tx = Math.floor(px / TILE);
+  const ty = Math.floor(py / TILE);
+  const cx = Math.floor(tx / CHUNK_SIZE);
+  const cy = Math.floor(ty / CHUNK_SIZE);
+  const chunk = generateChunk(cx, cy);
+  const lx = ((tx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+  const ly = ((ty % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+  return chunk[ly * CHUNK_SIZE + lx];
+}
+function tileAt(px, py) { return getTileAt(px, py); }
+
+// FIX v1.4: Vehicle defs store spawn points; actual position assigned by safe spawner below
+// heading (rad) = direction car's FRONT points (replaces 'angle' for clearer orientation)
+// angle kept for backward compat with existing code, but heading is the source of truth
 const vehicleDefs = [
-  { name: 'Sedan',  maxSpeed: 280, color: '#4a6aaa', w: 32, h: 50, hp: 100 },
-  { name: 'Sports', maxSpeed: 380, color: '#cc3344', w: 30, h: 48, hp: 100 },
-  { name: 'Truck',  maxSpeed: 220, color: '#5a8a3a', w: 36, h: 60, hp: 150 },
-  { name: 'Motor',  maxSpeed: 320, color: '#222',   w: 16, h: 32, hp: 60  },
+  { name: 'Sedan',  maxSpeed: 280, color: '#4a6aaa', w: 30, h: 50, hp: 100, wheelbase: 38, type: 'spawn' },
+  { name: 'Sports', maxSpeed: 380, color: '#cc3344', w: 28, h: 48, hp: 100, wheelbase: 36, type: 'spawn' },
+  { name: 'Truck',  maxSpeed: 220, color: '#5a8a3a', w: 34, h: 62, hp: 150, wheelbase: 48, type: 'spawn' },
+  { name: 'Motor',  maxSpeed: 320, color: '#222',   w: 14, h: 30, hp: 60,  wheelbase: 22, type: 'spawn' },
 ];
 const vehicles = [];
 for (const def of vehicleDefs) {
@@ -640,15 +717,17 @@ for (const def of vehicleDefs) {
   for (let attempt = 0; attempt < 50 && !spawned; attempt++) {
     const pos = findClearSpawnPos(def.w, def.h);
     if (pos) {
-      // FIX #3 (bike orientation): Motorbike faces UP initially so its "front" = -y axis
-      // Cars have long axis = h (vertical) — angle=0 means pointing up
-      vehicles.push({ ...def, x: pos.x, y: pos.y, angle: -Math.PI/2, speed: 0 });
+      // FIX v1.4: Bike uses side-view sprite (wider h, narrower w for top-down silhouette)
+      // All vehicles spawn facing UP (heading = -π/2)
+      // heading: 0=right, π/2=down, π=left, -π/2=up (canvas coords)
+      // v.fSteer: current steering angle of front wheels (rad)
+      // v.steerTarget: target steering (smooth toward this)
+      vehicles.push({ ...def, x: pos.x, y: pos.y, heading: -Math.PI/2, speed: 0, fSteer: 0, steerTarget: 0, stolen: false });
       spawned = true;
     }
   }
   if (!spawned) {
-    // Fallback: park at center of map (very unlikely to fail 50 attempts)
-    vehicles.push({ ...def, x: WORLD_W*TILE/2, y: WORLD_H*TILE/2, angle: -Math.PI/2, speed: 0 });
+    vehicles.push({ ...def, x: WORLD_W*TILE/2, y: WORLD_H*TILE/2, heading: -Math.PI/2, speed: 0, fSteer: 0, steerTarget: 0, stolen: false });
   }
 }
 
@@ -659,10 +738,20 @@ for (let i = 0; i < 40; i++) {
   if (!pos) continue;
   const colors = ['#888', '#666', '#aaa', '#445', '#557', '#776', '#553'];
   parkedCars.push({
+    name: ['Sedan', 'Coupe', 'Hatch', 'Wagon', 'Pickup'][Math.floor(Math.random() * 5)],
     x: pos.x, y: pos.y,
-    angle: [0, Math.PI/2][Math.floor(Math.random()*2)],
+    // Random heading (0, π/2, π, -π/2) — i.e. N/S/E/W
+    heading: [0, Math.PI/2, Math.PI, -Math.PI/2][Math.floor(Math.random()*4)],
     color: colors[Math.floor(Math.random() * colors.length)],
     w: 30, h: 48,
+    maxSpeed: 180 + Math.floor(Math.random() * 60),  // 180-240 km/h
+    hp: 80 + Math.floor(Math.random() * 30),  // 80-110 hp
+    wheelbase: 38,
+    fSteer: 0,
+    steerTarget: 0,
+    speed: 0,
+    stolen: false,
+    type: 'parked',
   });
 }
 
@@ -752,12 +841,7 @@ function findClearSpawnPos(w, h, maxAttempts = 30) {
   }
   return null;
 }
-function tileAt(px, py) {
-  const tx = Math.floor(px / TILE);
-  const ty = Math.floor(py / TILE);
-  if (tx < 0 || tx >= WORLD_W || ty < 0 || ty >= WORLD_H) return 4;
-  return world[ty][tx];
-}
+// (moved above)
 
 function isSolid(px, py, r=10) {
   const t = tileAt(px, py);
@@ -1265,6 +1349,50 @@ function update(dt) {
     if (confirm('Reset toàn bộ save? Game sẽ reload.')) resetState();
   }
 
+  // FIX v1.4: Ambient parked car spawn — keep city alive as player moves
+  if (!window.ambientSpawnTimer) window.ambientSpawnTimer = 0;
+  ambientSpawnTimer += dt;
+  if (ambientSpawnTimer > 1.5) {
+    ambientSpawnTimer = 0;
+    // Spawn parked cars near player (within 400px radius)
+    if (parkedCars.length < 50) {
+      for (let i = 0; i < 3; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const dist = 200 + Math.random() * 400;
+        const sx = player.x + Math.cos(ang) * dist;
+        const sy = player.y + Math.sin(ang) * dist;
+        const pos = findClearSpawnPos(30, 48);
+        if (!pos) continue;
+        // Only spawn if the spawn pos is actually near player (not in another region)
+        if (Math.abs(pos.x - sx) > 200 || Math.abs(pos.y - sy) > 200) continue;
+        // Avoid duplicating with existing parked cars (within 100px)
+        let tooClose = false;
+        for (const c of parkedCars) {
+          if (Math.hypot(c.x - pos.x, c.y - pos.y) < 100) { tooClose = true; break; }
+        }
+        if (tooClose) continue;
+        const colors = ['#888', '#666', '#aaa', '#445', '#557', '#776', '#553', '#992', '#229', '#449'];
+        parkedCars.push({
+          name: ['Sedan', 'Coupe', 'Hatch', 'Wagon', 'Pickup', 'SUV', 'Van'][Math.floor(Math.random() * 7)],
+          x: pos.x, y: pos.y,
+          heading: [0, Math.PI/2, Math.PI, -Math.PI/2][Math.floor(Math.random()*4)],
+          color: colors[Math.floor(Math.random() * colors.length)],
+          w: 30, h: 48,
+          maxSpeed: 180 + Math.floor(Math.random() * 60),
+          hp: 80 + Math.floor(Math.random() * 30),
+          wheelbase: 38,
+          fSteer: 0, steerTarget: 0, speed: 0, stolen: false, type: 'parked',
+        });
+      }
+    }
+    // Despawn parked cars far from player (>800px) to keep array bounded
+    for (let i = parkedCars.length - 1; i >= 0; i--) {
+      if (Math.hypot(parkedCars[i].x - player.x, parkedCars[i].y - player.y) > 1500) {
+        parkedCars.splice(i, 1);
+      }
+    }
+  }
+
   // T-02.3: Auto-save timer
   autoSaveTimer += dt;
   if (autoSaveTimer >= AUTOSAVE_INTERVAL) {
@@ -1292,37 +1420,59 @@ function update(dt) {
     // T-02.4: Handbrake (X key) for drift
     const handbrake = keys['x'];
 
-    // Speed
-    if (throttle > 0) v.speed += v.maxSpeed * 0.3 * throttle * dt;
-    else if (throttle < 0) v.speed += v.maxSpeed * 0.4 * throttle * dt;
-    else v.speed *= 0.98; // drag
+    // Speed (acceleration)
+    if (throttle > 0) v.speed += v.maxSpeed * 0.35 * throttle * dt;
+    else if (throttle < 0) v.speed += v.maxSpeed * 0.45 * throttle * dt;
+    else v.speed *= 0.985; // drag
     v.speed = Math.max(-v.maxSpeed * 0.3, Math.min(v.maxSpeed * boost, v.speed));
 
     // Brake
-    if (brake) v.speed *= 0.92;
+    if (brake) v.speed *= 0.93;
 
-    // Steering (only when moving). T-02.4: Drift = 2x turn rate when handbrake + speed > 100
-    if (Math.abs(v.speed) > 5) {
-      let turnRate = (v.speed > 0 ? 1 : -1) * 2.2 * (Math.abs(v.speed) / v.maxSpeed);
+    // FIX v1.4: Ackermann-like bicycle model
+    // Front wheel position (offset by wheelbase/2 in heading direction)
+    // Steering: front wheel angle (fSteer) determines turn rate
+    // MAX_STEER = 35° (typical car)
+    const MAX_STEER = 0.6; // ~34° in radians
+    const targetSteer = steering * MAX_STEER;
+    v.steerTarget = targetSteer;
+    // Smooth steering (so it doesn't snap)
+    v.fSteer += (v.steerTarget - v.fSteer) * Math.min(1, dt * 8);
+    // Handbrake: increase steer rate for drift
+    if (handbrake) {
+      v.fSteer = v.steerTarget * 1.4;
+      v.speed *= 0.99;
+    }
+
+    // Bicycle model: front wheel position
+    const wb = v.wheelbase || 38;
+    const rearX = v.x;
+    const rearY = v.y;
+    // Front wheel offset by wheelbase in heading direction
+    // Front = center + (wheelbase/2) * (cos(heading), sin(heading))
+    // Turn only works when moving
+    if (Math.abs(v.speed) > 1) {
+      const turnRate = (v.fSteer * v.speed) / wb;
+      // Reverse = flip turn direction
+      const dir = v.speed >= 0 ? 1 : -1;
+      const newHeading = v.heading + turnRate * dt * dir;
+      // Front wheel traces a curve; we approximate by rotating around rear axle
+      v.heading = newHeading;
+      // Tire smoke for drift
       if (handbrake && Math.abs(v.speed) > 100) {
-        turnRate *= 2.0; // Drift over-steer
-        // Reduce grip slightly = sliding
-        v.speed *= 0.985;
-        // T-02.4: Tire smoke particles
-        if (Math.random() < 0.4) {
+        if (Math.random() < 0.5) {
           addParticle(
-            v.x - Math.cos(v.angle) * v.h/2,
-            v.y - Math.sin(v.angle) * v.h/2,
+            v.x - Math.cos(v.heading) * v.h/2,
+            v.y - Math.sin(v.heading) * v.h/2,
             'rgba(180,180,180,0.6)', 1
           );
         }
       }
-      v.angle += steering * turnRate * dt;
     }
 
-    // Move with collision
-    const newX = v.x + Math.cos(v.angle) * v.speed * dt;
-    const newY = v.y + Math.sin(v.angle) * v.speed * dt;
+    // Move with collision (use heading for forward direction)
+    const newX = v.x + Math.cos(v.heading) * v.speed * dt;
+    const newY = v.y + Math.sin(v.heading) * v.speed * dt;
     let hit = false;
     if (isSolid(newX, v.y, 20)) { v.speed *= -0.4; hit = true; }
     else v.x = newX;
@@ -1344,8 +1494,8 @@ function update(dt) {
       }
     }
 
-    // Sync player to vehicle
-    player.x = v.x; player.y = v.y; player.angle = v.angle;
+    // Sync player to vehicle (use heading for player too)
+    player.x = v.x; player.y = v.y; player.angle = v.heading;
 
     // Hit pedestrians/objects
     if (Math.abs(v.speed) > 40) {
@@ -1375,14 +1525,14 @@ function update(dt) {
     if (consume('e')) {
       player.inVehicle = false;
       player.vehicleRef = null;
-      player.x = v.x + Math.cos(v.angle + Math.PI/2) * 35;
-      player.y = v.y + Math.sin(v.angle + Math.PI/2) * 35;
+      player.x = v.x + Math.cos(v.heading + Math.PI/2) * 35;
+      player.y = v.y + Math.sin(v.heading + Math.PI/2) * 35;
       showMsg('🚶 Đã xuống xe', 'normal', 1.5);
     }
 
     // Shoot from vehicle
     if (consume('f') && player.weapon === 'pistol' && player.shootCooldown <= 0) {
-      shootBullet(v.x + Math.cos(v.angle)*30, v.y + Math.sin(v.angle)*30, v.angle);
+      shootBullet(v.x + Math.cos(v.heading)*30, v.y + Math.sin(v.heading)*30, v.heading);
       player.ammo--;
       if (player.ammo <= 0) {
         player.weapon = 'fist';
@@ -1416,10 +1566,11 @@ function update(dt) {
       player.animFrame = 0;
     }
 
-    // Enter vehicle
+    // Enter vehicle — ANY car (main spawns + parked) within reach
     if (consume('e')) {
       let nearest = null, nearDist = 50;
-      for (const v of vehicles) {
+      const allCars = [...vehicles, ...parkedCars];
+      for (const v of allCars) {
         if (v.hp <= 0) continue;
         const d = dist(player, v);
         if (d < nearDist) { nearest = v; nearDist = d; }
@@ -1427,7 +1578,12 @@ function update(dt) {
       if (nearest) {
         player.inVehicle = true;
         player.vehicleRef = nearest;
-        showMsg(`🚗 Lên xe: ${nearest.name}`, 'normal', 1.5);
+        const isParked = parkedCars.includes(nearest);
+        showMsg(isParked ? `🔑 Cướp xe: ${nearest.name}` : `🚗 Lên xe: ${nearest.name}`, 'normal', 1.5);
+        if (isParked) {
+          player.wanted = Math.min(5, player.wanted + 1);
+          player.wantedDecay = 8; // reset decay so new star doesn't instantly decay
+        }
       }
     }
 
@@ -1695,27 +1851,41 @@ function shootBullet(x, y, angle) {
 
 // ============ RENDER ============
 function drawWorld() {
-  const startTX = Math.max(0, Math.floor(camera.x / TILE));
-  const startTY = Math.max(0, Math.floor(camera.y / TILE));
-  const endTX = Math.min(WORLD_W, Math.ceil((camera.x + W) / TILE) + 1);
-  const endTY = Math.min(WORLD_H, Math.ceil((camera.y + H) / TILE) + 1);
+  // FIX v1.4: Infinite world — render visible tiles via procedural chunks
+  const startTX = Math.floor(camera.x / TILE);
+  const startTY = Math.floor(camera.y / TILE);
+  const endTX = Math.ceil((camera.x + W) / TILE) + 1;
+  const endTY = Math.ceil((camera.y + H) / TILE) + 1;
+
+  // Lighting offset (sun from top-left)
+  const lightX = -3, lightY = -3;
 
   for (let y = startTY; y < endTY; y++) {
     for (let x = startTX; x < endTX; x++) {
-      const t = world[y][x];
+      const t = getTileAt(x * TILE + TILE/2, y * TILE + TILE/2);
       const px = x * TILE - camera.x;
       const py = y * TILE - camera.y;
       switch (t) {
         case 0: // grass
           ctx.fillStyle = (x+y) % 2 === 0 ? '#3d5a3d' : '#3a5535';
           ctx.fillRect(px, py, TILE, TILE);
+          // Grass texture: small darker tufts
+          if ((x*7 + y*13) % 5 === 0) {
+            ctx.fillStyle = '#2d4a2d';
+            ctx.fillRect(px + 8, py + 12, 2, 3);
+            ctx.fillRect(px + 40, py + 50, 2, 3);
+          }
           break;
         case 1: // road
           ctx.fillStyle = '#3a3a3a';
           ctx.fillRect(px, py, TILE, TILE);
+          // 2.5D: slight elevation — lighter highlight on top edge
+          ctx.fillStyle = 'rgba(80,80,80,0.5)';
+          ctx.fillRect(px, py, TILE, 1);
           // Lane markings
           ctx.fillStyle = '#ffd166';
-          if (y === 5 || y === 12 || y === 19 || y === 26 || y === 33 || y === 40) {
+          const isH = y === 5 || y === 12 || y === 19 || y === 26 || y === 33 || y === 40;
+          if (isH) {
             for (let i = 0; i < 4; i++) {
               ctx.fillRect(px + i*16 + 4, py + TILE/2 - 1, 8, 2);
             }
@@ -1724,39 +1894,79 @@ function drawWorld() {
               ctx.fillRect(px + TILE/2 - 1, py + i*16 + 4, 2, 8);
             }
           }
-          // Sidewalk strips
+          // Sidewalk strips (slightly raised)
           ctx.fillStyle = '#888';
           ctx.fillRect(px, py, TILE, 4);
           ctx.fillRect(px, py + TILE - 4, TILE, 4);
+          // Sidewalk shadow edge
+          ctx.fillStyle = 'rgba(0,0,0,0.2)';
+          ctx.fillRect(px, py + 4, TILE, 1);
+          ctx.fillRect(px, py + TILE - 5, TILE, 1);
           break;
-        case 2: // building
-          // Shadow
-          ctx.fillStyle = 'rgba(0,0,0,0.3)';
-          ctx.fillRect(px + 6, py + 6, TILE-8, TILE-8);
-          // Building body
-          const buildingH = TILE - 16;
-          const buildingColors = ['#7a5a3a', '#6a4a3a', '#8a6a4a', '#5a4a3a', '#9a8a7a'];
-          ctx.fillStyle = buildingColors[(x*7 + y*13) % 5];
+        case 2: // building — 2.5D with shadow elevation
+          // 2.5D effect: building rises from ground, sun from top-left → strong shadow down-right
+          const bldH = 12;  // building appears to rise this much
+          // Deep ground shadow (sun from top-left) — drawn first as it goes under building
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(px + bldH, py + bldH, TILE-4, TILE-4, 2);
+          else ctx.rect(px + bldH, py + bldH, TILE-4, TILE-4);
+          ctx.fill();
+          // SIDE WALLS (drawn first, behind the roof from top-down view)
+          // South wall (visible at bottom — camera looks down so we see this side)
+          ctx.fillStyle = '#3a2a1a';
+          ctx.fillRect(px + 4, py + TILE - 4, TILE-8, bldH);
+          // East wall
+          ctx.fillStyle = '#4a3a2a';
+          ctx.fillRect(px + TILE - 4, py + 4, bldH, TILE-8);
+          // ROOF (top face) — gets sun
+          const buildingColors = ['#7a5a3a', '#8a6a4a', '#6a4a3a', '#9a7a5a', '#7a6a5a', '#5a4a3a', '#aa9a7a'];
+          ctx.fillStyle = buildingColors[(x*7 + y*13) % 7];
           ctx.fillRect(px + 4, py + 4, TILE-8, TILE-8);
-          // Windows
-          ctx.fillStyle = '#222';
+          // Wall edges (top of walls, where they meet roof) — DARKER
+          ctx.fillStyle = '#2a1a0a';
+          ctx.fillRect(px + 4, py + TILE - 4 - 1, TILE-8, 1); // top of south wall
+          ctx.fillRect(px + TILE - 4 - 1, py + 4, 1, TILE-8); // top of east wall
+          // Roof highlight (NW corner gets sun)
+          ctx.fillStyle = 'rgba(255,240,200,0.3)';
+          ctx.fillRect(px + 4, py + 4, TILE-8, 2);
+          ctx.fillRect(px + 4, py + 4, 2, TILE-8);
+          // Roof shadow on south/east (away from sun)
+          ctx.fillStyle = 'rgba(0,0,0,0.25)';
+          ctx.fillRect(px + 4, py + TILE - 6, TILE-8, 2);
+          ctx.fillRect(px + TILE - 6, py + 4, 2, TILE-8);
+          // Top cornice
+          ctx.fillStyle = '#3a1a0a';
+          ctx.fillRect(px + 4, py + 4, TILE-8, 3);
+          // Windows in grid (3x3)
           for (let wy = 0; wy < 3; wy++) {
-            for (let wx = 0; wx < 4; wx++) {
-              ctx.fillRect(px + 8 + wx*12, py + 8 + wy*16, 8, 10);
+            for (let wx = 0; wx < 3; wx++) {
+              const wxPos = px + 8 + wx*16;
+              const wyPos = py + 10 + wy*14;
+              // Window frame
+              ctx.fillStyle = '#1a1a1a';
+              ctx.fillRect(wxPos, wyPos, 10, 10);
+              // Window glass
+              const lit = (x*7 + y*13 + wx + wy*3) % 3 === 0;
+              ctx.fillStyle = lit ? '#ffd166' : '#3a4a5a';
+              ctx.fillRect(wxPos + 1, wyPos + 1, 8, 8);
+              // Cross frame
+              ctx.fillStyle = '#1a1a1a';
+              ctx.fillRect(wxPos + 4, wyPos + 1, 2, 8);
+              ctx.fillRect(wxPos + 1, wyPos + 4, 8, 2);
+              if (lit) {
+                // Window glow halo
+                ctx.fillStyle = 'rgba(255,209,102,0.4)';
+                ctx.fillRect(wxPos - 1, wyPos - 1, 12, 12);
+              }
             }
           }
-          // Lit windows
-          if ((x + y) % 3 === 0) {
-            ctx.fillStyle = '#ffd166';
-            ctx.fillRect(px + 8 + 12, py + 8, 8, 10);
-          }
-          if ((x + y) % 5 === 0) {
-            ctx.fillStyle = '#ffd166';
-            ctx.fillRect(px + 8 + 24, py + 24, 8, 10);
-          }
-          // Roof
-          ctx.fillStyle = '#4a2a1a';
-          ctx.fillRect(px + 4, py + 4, TILE-8, 6);
+          // Door
+          ctx.fillStyle = '#2a1a0a';
+          ctx.fillRect(px + TILE/2 - 4, py + TILE - 12, 8, 8);
+          // Door knob
+          ctx.fillStyle = '#ffd166';
+          ctx.fillRect(px + TILE/2 + 1, py + TILE - 8, 1, 1);
           break;
         case 3: // sidewalk
           ctx.fillStyle = '#888';
@@ -1776,6 +1986,9 @@ function drawWorld() {
           ctx.fillRect(px + 8, py + 12 + wave, 12, 2);
           ctx.fillRect(px + 30, py + 24 + wave, 14, 2);
           ctx.fillRect(px + 14, py + 40 + wave, 16, 2);
+          // Water highlight
+          ctx.fillStyle = 'rgba(150,200,255,0.2)';
+          ctx.fillRect(px, py, TILE, 1);
           break;
       }
     }
@@ -1785,37 +1998,123 @@ function drawWorld() {
 function drawVehicle(v, isPlayer=false) {
   const px = v.x - camera.x;
   const py = v.y - camera.y;
-  if (px < -100 || px > W + 100 || py < -100 || py > H + 100) return;
+  if (px < -200 || px > W + 200 || py < -200 || py > H + 200) return;
 
-  // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  // 2.5D pseudo-isometric: vehicle has "height" (lifted body) — we draw side shadow first
+  const bodyH = v.name === 'Truck' ? 12 : 8;  // truck is taller
+  const shadowOffsetX = 4, shadowOffsetY = 6;
+
+  // Ground shadow (offset down-right for sun-from-top-left lighting)
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.save();
-  ctx.translate(px + 3, py + 3);
-  ctx.rotate(v.angle);
-  ctx.fillRect(-v.w/2, -v.h/2, v.w, v.h);
+  ctx.translate(px + shadowOffsetX, py + shadowOffsetY);
+  ctx.rotate(v.heading);
+  ctx.beginPath();
+  // Rounded rectangle for softer shadow
+  const sw = v.w, sh = v.h;
+  ctx.roundRect ? ctx.roundRect(-sw/2, -sh/2, sw, sh, 4) : ctx.rect(-sw/2, -sh/2, sw, sh);
+  ctx.fill();
   ctx.restore();
 
-  // Car body
+  // Vehicle body group — translate then rotate
   ctx.save();
   ctx.translate(px, py);
-  ctx.rotate(v.angle);
-  ctx.fillStyle = v.color;
+  ctx.rotate(v.heading);
+
+  // "Height" extrusion — draw side faces to suggest 3D
+  // The 2.5D effect: vehicle body sits elevated, side panels visible
+  const sideColor = v.color;
+  const sideDark = darkenColor(v.color, 0.4);
+  const sideLight = lightenColor(v.color, 0.15);
+
+  // Bottom face (slightly larger darker outline) - acts as ground footprint
+  ctx.fillStyle = sideDark;
+  ctx.fillRect(-v.w/2 - 1, -v.h/2 - 1, v.w + 2, v.h + 2);
+
+  // Main body (top face)
+  ctx.fillStyle = sideColor;
   ctx.fillRect(-v.w/2, -v.h/2, v.w, v.h);
-  // Windshield
-  ctx.fillStyle = '#112244';
-  ctx.fillRect(-v.w/2 + 3, -v.h/2 + 6, v.w - 6, 8);
-  // Rear window
-  ctx.fillRect(-v.w/2 + 3, v.h/2 - 12, v.w - 6, 6);
-  // Headlights
-  ctx.fillStyle = '#ffffaa';
-  ctx.fillRect(-v.w/2 + 2, -v.h/2 + 1, 6, 4);
-  ctx.fillRect(v.w/2 - 8, -v.h/2 + 1, 6, 4);
-  // Taillights
-  ctx.fillStyle = '#ff3333';
-  ctx.fillRect(-v.w/2 + 2, v.h/2 - 5, 6, 3);
-  ctx.fillRect(v.w/2 - 8, v.h/2 - 5, 6, 3);
+
+  // Left/right side panels (2.5D illusion - draw thin offset darker rects)
+  // Right side panel
+  ctx.fillStyle = sideDark;
+  ctx.fillRect(v.w/2 - 1, -v.h/2 + 2, 2, v.h - 4);
+  // Top edge highlight (light from top)
+  ctx.fillStyle = sideLight;
+  ctx.fillRect(-v.w/2 + 2, -v.h/2, v.w - 4, 1);
+
+  // FRONT (heading direction = -y in local space):
+  // - Headlights (yellow, on the FRONT)
+  // - Front grille / bumper
+  // - Windshield (tinted glass)
+  // REAR (heading + π = +y in local space):
+  // - Taillights (red, on the REAR)
+  // - Rear window
+
+  // FRONT WINDSCREEN (top, -y direction) — narrower than body, glass
+  ctx.fillStyle = '#3a5a8a';
+  ctx.fillRect(-v.w/2 + 4, -v.h/2 + 6, v.w - 8, 7);
+  // Windshield highlight
+  ctx.fillStyle = 'rgba(150,200,255,0.5)';
+  ctx.fillRect(-v.w/2 + 5, -v.h/2 + 7, (v.w - 8) * 0.3, 2);
+
+  // HOOD (in front of windshield, smaller)
+  ctx.fillStyle = sideLight;
+  ctx.fillRect(-v.w/2 + 3, -v.h/2 + 14, v.w - 6, v.h * 0.18);
+
+  // HEADLIGHTS (FRONT) — at the very front
+  ctx.fillStyle = '#fff5b8';
+  ctx.fillRect(-v.w/2 + 3, -v.h/2 + 1, 5, 3);
+  ctx.fillRect(v.w/2 - 8, -v.h/2 + 1, 5, 3);
+  // Headlight glow when on
+  if (Math.abs(v.speed) > 5) {
+    ctx.fillStyle = 'rgba(255,245,184,0.3)';
+    ctx.beginPath();
+    ctx.arc(-v.w/2 + 5, -v.h/2 + 2, 4, 0, Math.PI*2);
+    ctx.arc(v.w/2 - 5, -v.h/2 + 2, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // REAR WINDOW (bottom, +y direction)
+  ctx.fillStyle = '#2a4a6a';
+  ctx.fillRect(-v.w/2 + 5, v.h/2 - 11, v.w - 10, 5);
+
+  // TRUNK (behind rear window)
+  ctx.fillStyle = sideDark;
+  ctx.fillRect(-v.w/2 + 3, v.h/2 - 6, v.w - 6, 3);
+
+  // TAILLIGHTS (REAR) — at the very rear
+  ctx.fillStyle = '#ff3838';
+  ctx.fillRect(-v.w/2 + 3, v.h/2 - 3, 5, 2);
+  ctx.fillRect(v.w/2 - 8, v.h/2 - 3, 5, 2);
+  // Brake lights (brighter when braking)
+  if (keys && keys[' ']) {
+    ctx.fillStyle = '#ffaaaa';
+    ctx.fillRect(-v.w/2 + 3, v.h/2 - 3, 5, 2);
+    ctx.fillRect(v.w/2 - 8, v.h/2 - 3, 5, 2);
+  }
+
+  // FRONT BUMPER detail
+  ctx.fillStyle = '#888';
+  ctx.fillRect(-v.w/2 + 2, -v.h/2, v.w - 4, 1);
+
+  // FRONT WHEEL INDICATOR (small dark dot for orientation)
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(-v.w/2 + 1, -v.h/2 + 2, 2, 2);
+  ctx.fillRect(v.w/2 - 3, -v.h/2 + 2, 2, 2);
+
+  // STEERING indicator — show front wheel direction when steering
+  if (isPlayer && v.fSteer !== undefined && Math.abs(v.fSteer) > 0.05) {
+    ctx.save();
+    ctx.translate(0, -v.h/2 + 3);
+    ctx.rotate(v.fSteer);
+    ctx.fillStyle = 'rgba(255,209,102,0.7)';
+    ctx.fillRect(-1, -1, 2, 4);
+    ctx.restore();
+  }
+
   // Police lights
-  if (v === policeCars.find(p => p === v)) {
+  if (policeCars.includes(v)) {
     const flicker = Math.floor(performance.now() / 100) % 2;
     ctx.fillStyle = flicker ? '#ff0000' : '#0044ff';
     ctx.fillRect(-v.w/2 + 4, -v.h/2 + 0, 6, 3);
@@ -1823,7 +2122,7 @@ function drawVehicle(v, isPlayer=false) {
   }
   ctx.restore();
 
-  // HP bar for damaged
+  // HP bar (world space, above vehicle)
   if (v.hp < v.maxHp) {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(px - 20, py - v.h/2 - 14, 40, 4);
@@ -1831,26 +2130,43 @@ function drawVehicle(v, isPlayer=false) {
     ctx.fillRect(px - 20, py - v.h/2 - 14, 40 * (v.hp / v.maxHp), 4);
   }
 
-  // T-02.2: Vehicle damage visual — smoke + fire
+  // T-02.2: Vehicle damage visual — smoke + fire (at REAR)
   const hpRatio = v.hp / v.maxHp;
   if (hpRatio < 0.5 && Math.random() < 0.3) {
-    // Smoke from engine bay
-    const sx = px + Math.cos(v.angle + Math.PI) * 8;
-    const sy = py + Math.sin(v.angle + Math.PI) * 8;
+    // Smoke from exhaust (rear)
+    const sx = px + Math.cos(v.heading + Math.PI) * (v.h/2 + 2);
+    const sy = py + Math.sin(v.heading + Math.PI) * (v.h/2 + 2);
     ctx.fillStyle = hpRatio < 0.2 ? 'rgba(255,80,0,0.7)' : 'rgba(100,100,100,0.5)';
     ctx.beginPath();
     ctx.arc(sx + (Math.random()-0.5)*4, sy + (Math.random()-0.5)*4, 3 + Math.random()*4, 0, Math.PI*2);
     ctx.fill();
   }
   if (hpRatio < 0.2 && Math.random() < 0.5) {
-    // Fire flicker
-    const fx = px + Math.cos(v.angle + Math.PI) * 6;
-    const fy = py + Math.sin(v.angle + Math.PI) * 6;
+    // Fire flicker at engine bay (front)
+    const fx = px + Math.cos(v.heading) * (v.h/2 - 4);
+    const fy = py + Math.sin(v.heading) * (v.h/2 - 4);
     ctx.fillStyle = Math.random() < 0.5 ? '#ff4400' : '#ffaa00';
     ctx.beginPath();
     ctx.arc(fx + (Math.random()-0.5)*3, fy + (Math.random()-0.5)*3, 2 + Math.random()*3, 0, Math.PI*2);
     ctx.fill();
   }
+}
+
+// Helper: darken hex color by factor
+function darkenColor(hex, factor) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return `rgb(${Math.floor(r*factor)},${Math.floor(g*factor)},${Math.floor(b*factor)})`;
+}
+function lightenColor(hex, factor) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  const nr = Math.min(255, Math.floor(r + (255-r)*factor));
+  const ng = Math.min(255, Math.floor(g + (255-g)*factor));
+  const nb = Math.min(255, Math.floor(b + (255-b)*factor));
+  return `rgb(${nr},${ng},${nb})`;
 }
 
 function drawPlayer() {
@@ -1997,38 +2313,52 @@ function drawMissionMarkers() {
 function drawMinimap() {
   miniCtx.fillStyle = '#000';
   miniCtx.fillRect(0, 0, 160, 160);
-  const scale = 160 / (WORLD_W * TILE);
-  const ox = -player.x * scale + 80;
-  const oy = -player.y * scale + 80;
-  // Tiles
-  for (let y = 0; y < WORLD_H; y++) {
-    for (let x = 0; x < WORLD_W; x++) {
-      const t = world[y][x];
-      const c = t === 1 ? '#555' : t === 2 ? '#7a5a3a' : t === 4 ? '#1a4a7a' : '#3d5a3d';
+  // FIX v1.4: Infinite world minimap — show ~30-tile radius around player
+  const MINI_RANGE = 24; // tiles
+  const MINI_TILE = 160 / (MINI_RANGE * 2);
+  const ox = -player.x * MINI_TILE + 80;
+  const oy = -player.y * MINI_TILE + 80;
+  // Tiles in radius
+  const pxTile = Math.floor(player.x / TILE);
+  const pyTile = Math.floor(player.y / TILE);
+  for (let dy = -MINI_RANGE; dy < MINI_RANGE; dy++) {
+    for (let dx = -MINI_RANGE; dx < MINI_RANGE; dx++) {
+      const t = getTileAt((pxTile + dx) * TILE + TILE/2, (pyTile + dy) * TILE + TILE/2);
+      const c = t === 1 ? '#555' : t === 2 ? '#7a5a3a' : t === 4 ? '#1a4a7a' : t === 3 ? '#666' : '#3d5a3d';
       miniCtx.fillStyle = c;
-      miniCtx.fillRect(x * TILE * scale + ox, y * TILE * scale + oy, TILE * scale + 1, TILE * scale + 1);
+      miniCtx.fillRect((pxTile + dx) * TILE * MINI_TILE + ox, (pyTile + dy) * TILE * MINI_TILE + oy, TILE * MINI_TILE + 1, TILE * MINI_TILE + 1);
     }
   }
   // Player
   miniCtx.fillStyle = '#ff6b35';
   miniCtx.fillRect(78, 78, 4, 4);
-  // Vehicles
+  // Vehicles (main spawns only)
   for (const v of vehicles) {
     if (v.hp <= 0) continue;
+    if (Math.abs(v.x - player.x) > MINI_RANGE * TILE || Math.abs(v.y - player.y) > MINI_RANGE * TILE) continue;
     miniCtx.fillStyle = '#4a6aaa';
-    miniCtx.fillRect(v.x * scale + ox - 1, v.y * scale + oy - 1, 3, 3);
+    miniCtx.fillRect(v.x * MINI_TILE + ox - 1, v.y * MINI_TILE + oy - 1, 3, 3);
+  }
+  // Parked cars
+  for (const v of parkedCars) {
+    if (v.hp <= 0) continue;
+    if (Math.abs(v.x - player.x) > MINI_RANGE * TILE || Math.abs(v.y - player.y) > MINI_RANGE * TILE) continue;
+    miniCtx.fillStyle = '#888';
+    miniCtx.fillRect(v.x * MINI_TILE + ox - 1, v.y * MINI_TILE + oy - 1, 2, 2);
   }
   // Police
   miniCtx.fillStyle = '#1133aa';
   for (const p of policeCars) {
-    miniCtx.fillRect(p.x * scale + ox - 1, p.y * scale + oy - 1, 3, 3);
+    if (Math.abs(p.x - player.x) > MINI_RANGE * TILE || Math.abs(p.y - player.y) > MINI_RANGE * TILE) continue;
+    miniCtx.fillRect(p.x * MINI_TILE + ox - 1, p.y * MINI_TILE + oy - 1, 3, 3);
   }
   // Mission markers
   for (let i = 0; i < missionMarkers.length; i++) {
     if (!missionMarkers[i].active) continue;
     const m = missionMarkers[i];
+    if (Math.abs(m.x - player.x) > MINI_RANGE * TILE || Math.abs(m.y - player.y) > MINI_RANGE * TILE) continue;
     miniCtx.fillStyle = '#ffd166';
-    miniCtx.fillRect(m.x * scale + ox - 2, m.y * scale + oy - 2, 4, 4);
+    miniCtx.fillRect(m.x * MINI_TILE + ox - 2, m.y * MINI_TILE + oy - 2, 4, 4);
   }
   // Border
   miniCtx.strokeStyle = '#ffd166';
