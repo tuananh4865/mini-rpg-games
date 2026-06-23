@@ -118,6 +118,130 @@
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
   #intro .keys { color: #8a8aa8; font-size: 11px; margin-top: 20px; line-height: 1.8; text-align: center; }
   #intro .keys kbd { padding: 2px 6px; background: #2a2a3a; border: 1px solid #4a4a6a; border-radius: 3px; color: #e8e8d8; }
+
+  /* ============ TOUCH CONTROLS (mobile + desktop opt-in) ============ */
+  #touchCtrl {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: rgba(10,10,20,0.7);
+    border: 1px solid #3a3a5a;
+    border-radius: 20px;
+    font-size: 12px;
+    color: #e8e8d8;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: pointer;
+  }
+  #touchCtrl .switch {
+    width: 36px; height: 20px;
+    background: #2a2a3a;
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.2s;
+  }
+  #touchCtrl .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    background: #8a8aa8;
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+  }
+  #touchCtrl.on .switch { background: #6bcf7a; }
+  #touchCtrl.on .switch::after { transform: translateX(16px); background: #fff; }
+  #touchCtrl .label { font-weight: bold; }
+
+  /* Joystick (left) */
+  #joystick {
+    position: absolute;
+    bottom: 24px; left: 24px;
+    width: 130px; height: 130px;
+    border-radius: 50%;
+    background: rgba(10,10,20,0.4);
+    border: 2px solid rgba(255,255,255,0.2);
+    z-index: 40;
+    display: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #joystick .stick {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 50px; height: 50px;
+    margin: -25px 0 0 -25px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.4);
+    border: 2px solid rgba(255,255,255,0.6);
+    transition: background 0.1s;
+  }
+  #joystick.active .stick { background: rgba(107,207,122,0.6); }
+
+  /* Action buttons (right) */
+  #actions {
+    position: absolute;
+    bottom: 24px; right: 24px;
+    width: 180px; height: 180px;
+    z-index: 40;
+    display: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .abtn {
+    position: absolute;
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: rgba(10,10,20,0.55);
+    border: 2px solid rgba(255,255,255,0.4);
+    color: #fff;
+    font-weight: bold;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    line-height: 1.1;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: background 0.1s, transform 0.1s;
+  }
+  .abtn:active, .abtn.pressed {
+    background: rgba(255,209,102,0.7);
+    transform: scale(0.92);
+  }
+  .abtn.small { width: 46px; height: 46px; font-size: 11px; }
+  .abtn.mute-active { background: rgba(255,107,107,0.6); }
+  /* Layout: E top-left, F top-right, SPACE bottom-center, X bottom-left, J bottom-right, M/L small bottom */
+  #btnE    { top: 0;   left: 0; }
+  #btnF    { top: 0;   right: 0; }
+  #btnSpc  { bottom: 0; left: 50%; transform: translateX(-50%); }
+  #btnX    { bottom: 36px; left: 12px; }
+  #btnJ    { bottom: 36px; right: 12px; }
+  #btnM    { top: 64px; left: 12px; }
+  #btnL    { top: 64px; right: 12px; }
+  #btnSpc:active, #btnSpc.pressed { transform: translateX(-50%) scale(0.92); }
+
+  @media (max-width: 600px) {
+    #touchCtrl { top: 8px; font-size: 11px; padding: 4px 8px; }
+    #joystick { width: 110px; height: 110px; bottom: 16px; left: 16px; }
+    #joystick .stick { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+    #actions { width: 160px; height: 160px; bottom: 16px; right: 16px; }
+    .abtn { width: 48px; height: 48px; font-size: 12px; }
+    .abtn.small { width: 38px; height: 38px; font-size: 10px; }
+  }
+  @media (hover: none) and (pointer: coarse) {
+    /* Auto-enable on touch devices */
+    #touchCtrl.on .switch::after { transform: translateX(16px); }
+  }
 </style>
 </head>
 <body>
@@ -148,6 +272,27 @@
   </div>
 
   <div id="msg"></div>
+
+  <!-- Touch controls: toggle switch + joystick + action buttons -->
+  <div id="touchCtrl" title="Bật/tắt nút bấm ảo cho điện thoại">
+    <span>📱 Nút ảo</span>
+    <div class="switch"></div>
+    <span class="label" id="touchLabel">OFF</span>
+  </div>
+
+  <div id="joystick">
+    <div class="stick"></div>
+  </div>
+
+  <div id="actions">
+    <div class="abtn" id="btnE" data-key="e">E<br><small style="font-size:9px;opacity:0.7">xe</small></div>
+    <div class="abtn" id="btnF" data-key="f">F<br><small style="font-size:9px;opacity:0.7">bắn</small></div>
+    <div class="abtn" id="btnSpc" data-key=" ">␣<br><small style="font-size:9px;opacity:0.7">đấm</small></div>
+    <div class="abtn small" id="btnX" data-key="x">X<br><small style="font-size:8px;opacity:0.7">drift</small></div>
+    <div class="abtn small" id="btnJ" data-key="j">J<br><small style="font-size:8px;opacity:0.7">n.vụ</small></div>
+    <div class="abtn small" id="btnM" data-key="m">M<br><small style="font-size:8px;opacity:0.7">mute</small></div>
+    <div class="abtn small" id="btnL" data-key="l">L<br><small style="font-size:8px;opacity:0.7">save</small></div>
+  </div>
 
   <div id="intro">
     <h1>CITY DRIFT</h1>
@@ -932,6 +1077,163 @@ document.getElementById('intro').addEventListener('touchstart', (e) => {
   e.preventDefault();
   if (!started) startGame();
 }, { passive: false });
+
+// ============ TOUCH CONTROLS ============
+// Toggle button: enable/disable virtual joystick + action buttons
+// - On touch devices: auto-enabled on first touch
+// - On desktop: opt-in via the switch
+let touchEnabled = false;
+const touchCtrlEl = document.getElementById('touchCtrl');
+const touchLabelEl = document.getElementById('touchLabel');
+const joystickEl = document.getElementById('joystick');
+const actionsEl = document.getElementById('actions');
+const stickEl = joystickEl.querySelector('.stick');
+
+function setTouchEnabled(on) {
+  touchEnabled = on;
+  touchCtrlEl.classList.toggle('on', on);
+  touchLabelEl.textContent = on ? 'ON' : 'OFF';
+  joystickEl.style.display = on ? 'block' : 'none';
+  actionsEl.style.display = on ? 'block' : 'none';
+  if (!on) {
+    // Release any held keys
+    stickEl.style.transform = 'translate(0px, 0px)';
+    joystickEl.classList.remove('active');
+    keys['w'] = keys['a'] = keys['s'] = keys['d'] = false;
+    keys['arrowup'] = keys['arrowleft'] = keys['arrowdown'] = keys['arrowright'] = false;
+    document.querySelectorAll('.abtn.pressed').forEach(b => {
+      b.classList.remove('pressed');
+      const k = b.dataset.key;
+      if (k) keys[k] = false;
+    });
+  }
+}
+touchCtrlEl.addEventListener('click', () => setTouchEnabled(!touchEnabled));
+// Don't let touch on the toggle bubble to game canvas
+touchCtrlEl.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+
+// Auto-enable on touch device first interaction
+window.addEventListener('touchstart', function autoEnable() {
+  if (!touchEnabled) setTouchEnabled(true);
+  window.removeEventListener('touchstart', autoEnable);
+}, { passive: true });
+
+// Joystick: convert touch position to W/A/S/D keys
+let joystickTouchId = null;
+function updateJoystick(clientX, clientY) {
+  const rect = joystickEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const maxR = rect.width / 2 - 25; // account for stick radius
+  let dx = clientX - cx;
+  let dy = clientY - cy;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist > maxR) {
+    dx = dx * maxR / dist;
+    dy = dy * maxR / dist;
+  }
+  stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
+  // Map to keys (with dead zone 0.3)
+  const dead = 0.3;
+  const nx = dx / maxR;  // -1..1
+  const ny = dy / maxR;
+  keys['w'] = ny < -dead;
+  keys['s'] = ny >  dead;
+  keys['a'] = nx < -dead;
+  keys['d'] = nx >  dead;
+  keys['arrowup']    = keys['w'];
+  keys['arrowdown']  = keys['s'];
+  keys['arrowleft']  = keys['a'];
+  keys['arrowright'] = keys['d'];
+  joystickEl.classList.toggle('active', dist > 5);
+}
+function resetJoystick() {
+  stickEl.style.transform = 'translate(0px, 0px)';
+  keys['w'] = keys['a'] = keys['s'] = keys['d'] = false;
+  keys['arrowup'] = keys['arrowleft'] = keys['arrowdown'] = keys['arrowright'] = false;
+  joystickEl.classList.remove('active');
+  joystickTouchId = null;
+}
+joystickEl.addEventListener('touchstart', e => {
+  if (!touchEnabled) return;
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  joystickTouchId = t.identifier;
+  updateJoystick(t.clientX, t.clientY);
+}, { passive: false });
+joystickEl.addEventListener('touchmove', e => {
+  if (!touchEnabled || joystickTouchId === null) return;
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystickTouchId) {
+      updateJoystick(t.clientX, t.clientY);
+      break;
+    }
+  }
+}, { passive: false });
+joystickEl.addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystickTouchId) resetJoystick();
+  }
+}, { passive: true });
+joystickEl.addEventListener('touchcancel', () => resetJoystick(), { passive: true });
+// Mouse fallback for desktop testing
+let mouseDown = false;
+joystickEl.addEventListener('mousedown', e => {
+  if (!touchEnabled) return;
+  mouseDown = true;
+  updateJoystick(e.clientX, e.clientY);
+});
+window.addEventListener('mousemove', e => {
+  if (!mouseDown || !touchEnabled) return;
+  updateJoystick(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; resetJoystick(); } });
+
+// Action buttons: set keys[] and justPressed[] to trigger the same path as keyboard
+function pressBtn(btn, k) {
+  if (!keys[k]) justPressed[k] = true;
+  keys[k] = true;
+  btn.classList.add('pressed');
+  // Visual feedback for mute
+  if (k === 'm') {
+    const isMuted = toggleMute();
+    btn.classList.toggle('mute-active', isMuted);
+  }
+}
+function releaseBtn(btn, k) {
+  keys[k] = false;
+  btn.classList.remove('pressed');
+}
+document.querySelectorAll('.abtn').forEach(btn => {
+  const k = btn.dataset.key;
+  if (!k) return;
+  // Touch events
+  btn.addEventListener('touchstart', e => {
+    if (!touchEnabled) return;
+    e.preventDefault();
+    pressBtn(btn, k);
+  }, { passive: false });
+  btn.addEventListener('touchend', e => {
+    e.preventDefault();
+    releaseBtn(btn, k);
+  }, { passive: false });
+  btn.addEventListener('touchcancel', () => releaseBtn(btn, k));
+  // Mouse fallback for desktop testing
+  btn.addEventListener('mousedown', e => {
+    if (!touchEnabled) return;
+    e.preventDefault();
+    pressBtn(btn, k);
+  });
+  btn.addEventListener('mouseup', e => {
+    e.preventDefault();
+    releaseBtn(btn, k);
+  });
+  btn.addEventListener('mouseleave', () => releaseBtn(btn, k));
+});
+// Prevent canvas touch from triggering game actions while tapping buttons
+actionsEl.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+joystickEl.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
 
 function update(dt) {
   if (!started) {
