@@ -778,6 +778,118 @@ for (let i = 0; i < 25; i++) {
   });
 }
 
+// T-02.12: Traffic vehicles (NPC cars driving on roads)
+const npcCars = [];
+const NPC_CAR_COLORS = ['#4acfff', '#ffd166', '#ef476f', '#06d6a0', '#f4a261', '#e9c46a'];
+const NPC_CAR_SPEEDS = [60, 80, 100, 120, 90, 70];
+const MAX_NPC_CARS = 16;
+const NPC_SPAWN_INTERVAL = 1.0; // seconds
+let npcCarSpawnTimer = 0;
+
+function spawnNpcCar() {
+  if (npcCars.length >= MAX_NPC_CARS) return;
+  // Try up to 8 random road tiles near player
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 350 + Math.random() * 400;
+    const x = player.x + Math.cos(angle) * dist;
+    const y = player.y + Math.sin(angle) * dist;
+    const tile = tileAt(x, y);
+    if (tile !== 1) continue; // only on roads
+    const colorIdx = Math.floor(Math.random() * NPC_CAR_COLORS.length);
+    const heading = Math.random() < 0.5 ? 0 : Math.PI; // right or left along road
+    npcCars.push({
+      x: x, y: y,
+      heading: heading,
+      speed: NPC_CAR_SPEEDS[colorIdx] * (0.8 + Math.random() * 0.4),
+      maxSpeed: NPC_CAR_SPEEDS[colorIdx],
+      color: NPC_CAR_COLORS[colorIdx],
+      w: 14, h: 24,
+      // Detected obstacle ahead: countdown to retry
+      stuckTimer: 0,
+    });
+    return;
+  }
+}
+
+function updateNpcCars(dt) {
+  // Spawn timer
+  npcCarSpawnTimer -= dt;
+  if (npcCarSpawnTimer <= 0) {
+    npcCarSpawnTimer = NPC_SPAWN_INTERVAL;
+    spawnNpcCar();
+  }
+  // Update + despawn
+  for (let i = npcCars.length - 1; i >= 0; i--) {
+    const c = npcCars[i];
+    // Despawn far from player
+    const dx = c.x - player.x;
+    const dy = c.y - player.y;
+    if (dx*dx + dy*dy > 1100*1100) {
+      npcCars.splice(i, 1);
+      continue;
+    }
+    // Drive forward along heading
+    const nx = c.x + Math.cos(c.heading) * c.speed * dt;
+    const ny = c.y + Math.sin(c.heading) * c.speed * dt;
+    // Check road ahead
+    const aheadTile = tileAt(nx + Math.cos(c.heading) * 30, ny + Math.sin(c.heading) * 30);
+    if (aheadTile !== 1) {
+      // Off road: try to turn back or stop
+      c.stuckTimer -= dt;
+      if (c.stuckTimer <= 0) {
+        // 180 turn
+        c.heading = (c.heading + Math.PI) % (Math.PI * 2);
+        c.stuckTimer = 2 + Math.random() * 2;
+      } else {
+        // Slow down
+        c.speed *= 0.9;
+        continue;
+      }
+    } else {
+      c.stuckTimer = Math.max(0, c.stuckTimer - dt);
+      // Restore speed
+      c.speed = Math.min(c.maxSpeed, c.speed + 60 * dt);
+    }
+    c.x = nx;
+    c.y = ny;
+    // Avoid player if too close (simple push)
+    const pdx = player.x - c.x;
+    const pdy = player.y - c.y;
+    const pdist = Math.sqrt(pdx*pdx + pdy*pdy);
+    if (pdist < 60 && pdist > 0) {
+      c.x -= (pdx / pdist) * 30 * dt;
+      c.y -= (pdy / pdist) * 30 * dt;
+    }
+  }
+}
+
+function drawNpcCars() {
+  for (const c of npcCars) {
+    const sx = c.x - camera.x;
+    const sy = c.y - camera.y;
+    if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(c.heading);
+    // Body
+    ctx.fillStyle = c.color;
+    ctx.fillRect(-c.w/2, -c.h/2, c.w, c.h);
+    // Roof darker
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(-c.w/2 + 2, -c.h/2 + 3, c.w - 4, c.h - 8);
+    // Headlights (front = local +x after rotate)
+    ctx.fillStyle = '#ffe066';
+    ctx.fillRect(c.w/2 - 2, -c.h/2 + 3, 2, 4);
+    ctx.fillRect(c.w/2 - 2, c.h/2 - 7, 2, 4);
+    // Taillights
+    ctx.fillStyle = '#ff3333';
+    ctx.fillRect(-c.w/2, -c.h/2 + 3, 2, 4);
+    ctx.fillRect(-c.w/2, c.h/2 - 7, 2, 4);
+    ctx.restore();
+  }
+}
+
 // Police cars
 const policeCars = [];
 const roadblocks = []; // T-02.5: parked police cars blocking roads
@@ -1392,6 +1504,39 @@ function update(dt) {
       }
     }
   }
+
+  // T-02.12: Dynamic pedestrian spawn (keep 24-40 alive near player)
+  if (npcs.length < 32 && Math.random() < 0.08) {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 250 + Math.random() * 500;
+      const nx = player.x + Math.cos(ang) * dist;
+      const ny = player.y + Math.sin(ang) * dist;
+      const tile = tileAt(nx, ny);
+      // Spawn near sidewalks (type 3) or grass (type 0)
+      if (tile === 0 || tile === 3) {
+        npcs.push({
+          x: nx, y: ny,
+          angle: Math.random() * Math.PI * 2,
+          speed: 18 + Math.random() * 22,
+          name: npcNames[Math.floor(Math.random() * npcNames.length)],
+          color: ['#ff6b9d', '#6bcf7a', '#a78bfa', '#ffd166', '#6bb8ff'][Math.floor(Math.random()*5)],
+          wanderTimer: 0,
+          scared: 0,
+        });
+        break;
+      }
+    }
+  }
+  // Despawn peds far from player
+  for (let i = npcs.length - 1; i >= 0; i--) {
+    if (Math.hypot(npcs[i].x - player.x, npcs[i].y - player.y) > 1000) {
+      npcs.splice(i, 1);
+    }
+  }
+
+  // T-02.12: Traffic NPC cars driving on roads
+  updateNpcCars(dt);
 
   // T-02.3: Auto-save timer
   autoSaveTimer += dt;
@@ -2389,6 +2534,9 @@ function render() {
   for (const p of policeCars) {
     drawVehicle(p);
   }
+
+  // T-02.12: NPC traffic cars (drawn before roadblocks so police sits on top)
+  drawNpcCars();
 
   // T-02.5: Draw roadblocks (parked police cars perpendicular to road)
   for (const rb of roadblocks) {
